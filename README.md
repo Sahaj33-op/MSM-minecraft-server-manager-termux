@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![MSM Logo](https://img.shields.io/badge/MSM-v3.2-brightgreen?style=for-the-badge&logo=minecraft&logoColor=white)
+![MSM Logo](https://img.shields.io/badge/MSM-v1-brightgreen?style=for-the-badge&logo=minecraft&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.7+-blue?style=for-the-badge&logo=python&logoColor=white)
 ![Termux](https://img.shields.io/badge/Termux-Compatible-black?style=for-the-badge&logo=android&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)
