@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Enhanced Minecraft Server Manager (MSM) for Termux - FIXED VERSION
-Fixed timeout issues and version ordering problems
+Minecraft Server Manager (MSM) for Termux
 Supports: Paper, Purpur, Folia, Vanilla, PocketMine-MP
 """
 
