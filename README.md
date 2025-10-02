@@ -194,8 +194,10 @@ pkg install python git -y
 git clone https://github.com/sahaj33-op/MSM-minecraft-server-manager-termux.git
 cd MSM-minecraft-server-manager-termux
 
-# 4. Install Python dependencies
+# 4. Install dependencies
 pip install requests psutil
+pkg install openjdk-17 -y
+pkg install openjdk-21 -y
 
 # 5. Make executable
 chmod +x msm.py
