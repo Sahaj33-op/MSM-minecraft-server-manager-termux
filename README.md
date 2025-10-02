@@ -252,7 +252,7 @@ screen -dmS msm python3 msm.py
 
 ```
 ═══════════════════════════════════════════════════════════════════
-         Enhanced Minecraft Server Manager v5.2
+         Enhanced Minecraft Server Manager v2
    Paper | Purpur | Folia | Vanilla | Fabric | Quilt | PocketMine
 ═══════════════════════════════════════════════════════════════════
 
