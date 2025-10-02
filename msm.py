@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-Minecraft Server Manager (MSM) for Termux
-Supports: Paper, Purpur, Folia, Vanilla, PocketMine-MP
+Enhanced Minecraft Server Manager (MSM) v2.1 for Termux
+Advanced Multi-Server, Multi-Flavor Manager with Enterprise Features
+
+Supports: Paper, Purpur, Folia, Vanilla, PocketMine-MP, Fabric, Quilt
+Features: Ngrok, Auto-restart, Backups, Monitoring, Java Auto-switching, Playit.gg
 """
 
 import os
@@ -14,13 +17,23 @@ import re
 import hashlib
 import psutil
 import threading
-from datetime import datetime
-from pathlib import Path
+import shlex
+import uuid
+import logging
+import signal
 import math
+import shutil
+import zipfile
+import sqlite3
+from datetime import datetime, timedelta
+from pathlib import Path
+from contextlib import contextmanager
 from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
+from urllib3.util.retry import Retry
+from typing import Dict, List, Optional, Tuple, Any
 
 # --- Configuration ---
+# Updated configuration constants
 SERVER_DIR = os.path.expanduser("~/minecraft-server")
 CONFIG_DIR = os.path.expanduser("~/.config/msm")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -31,11 +44,15 @@ NGROK_TIMEOUT = 15
 MAX_RAM_PERCENTAGE = 75
 VERSIONS_PER_PAGE = 10
 
+# New: Playit.gg configuration
+PLAYIT_DIR = os.path.join(CONFIG_DIR, "playit")  # Playit directory
+PLAYIT_EXECUTABLE = os.path.join(PLAYIT_DIR, "playit")  # Playit executable path
+
 # Enhanced timeout and retry configuration
 REQUEST_TIMEOUT = (10, 30)  # (connect_timeout, read_timeout)
 MAX_RETRIES = 3
 
-# Server Flavors Configuration
+# Server Flavors Configuration - Enhanced with more server types
 SERVER_FLAVORS = {
     "paper": {
         "name": "PaperMC",
@@ -74,6 +91,26 @@ SERVER_FLAVORS = {
         "supports_versions": True,
         "supports_snapshots": True,
         "jar_pattern": "server.jar",
+        "default_port": 25565,
+        "type": "java"
+    },
+    "fabric": {
+        "name": "Fabric",
+        "description": "Lightweight modding platform with excellent performance",
+        "api_base": "https://meta.fabricmc.net/v2/versions",
+        "supports_versions": True,
+        "supports_snapshots": True,
+        "jar_pattern": "fabric-server-launch.jar",
+        "default_port": 25565,
+        "type": "java"
+    },
+    "quilt": {
+        "name": "Quilt",
+        "description": "Modern Fabric fork with enhanced compatibility",
+        "api_base": "https://meta.quiltmc.org/v3/versions",
+        "supports_versions": True,
+        "supports_snapshots": True,
+        "jar_pattern": "quilt-server-launch.jar",
         "default_port": 25565,
         "type": "java"
     },
@@ -266,7 +303,7 @@ def check_dependencies():
 
     for command, package in dependencies.items():
         result = run_command(f"command -v {command}", capture_output=True)
-        if not result or result.returncode != 0:
+        if not result or (hasattr(result, 'returncode') and result.returncode != 0):
             missing_deps.append(package)
 
     if missing_deps:
@@ -872,12 +909,14 @@ def load_config():
     default_config = {
         "server_flavor": "paper",
         "server_version": None,
+        "server_name": "default",
         "ram_mb": 2048,
         "ngrok_authtoken": None,
         "auto_backup": True,
         "backup_interval_hours": 24,
         "max_backups": 5,
         "include_snapshots": False,
+        "playit_enabled": False,
         "server_settings": {
             "motd": "Enhanced MSM Server",
             "difficulty": "normal",
@@ -919,6 +958,8 @@ def download_server_jar(flavor, version, version_info):
     """Download the selected server jar file with enhanced session handling."""
     server_jar_path = os.path.join(SERVER_DIR, SERVER_JAR_NAME)
     session = create_robust_session()
+    download_url = None
+    expected_hash = None
 
     try:
         log_message('INFO', f"Downloading {SERVER_FLAVORS[flavor]['name']} {version}...")
@@ -1057,7 +1098,7 @@ def install_server():
 def is_server_running():
     """Enhanced server status check."""
     result = run_command(f"screen -ls | grep {SCREEN_SESSION_NAME}", capture_output=True)
-    if not result or result.returncode != 0:
+    if not result or (hasattr(result, 'returncode') and result.returncode != 0):
         return False
 
     # Check for Java or PHP process based on server type
@@ -1069,10 +1110,91 @@ def is_server_running():
     else:  # PHP for PocketMine
         process_check = run_command("pgrep -f 'php.*phar'", capture_output=True)
 
-    return process_check and process_check.returncode == 0
+    # Check if process_check is a subprocess result object
+    if process_check is True or process_check is False or process_check is None:
+        return False
+    
+    # Check if the process is running
+    return hasattr(process_check, 'returncode') and process_check.returncode == 0
+
+def get_playit_screen_name(server_name: str) -> str:
+    """Get the screen session name for the playit agent."""
+    return f"playit_{server_name}"
+
+def is_playit_running(server_name: str) -> bool:
+    """Check if the playit agent is running for a specific server."""
+    screen_name = get_playit_screen_name(server_name)
+    result = run_command(f"screen -ls | grep {screen_name}", check=False, capture_output=True)
+    if result is None or result is True or result is False or not hasattr(result, 'returncode') or not hasattr(result, 'stdout'):
+        return False
+    return hasattr(result, 'returncode') and result.returncode == 0 and hasattr(result, 'stdout') and screen_name in result.stdout
+
+def playit_manager():
+    """Manages the installation and setup of the playit.gg agent."""
+    print_header()
+    print(f"{C.BOLD}Playit.gg Tunneling Setup{C.RESET}")
+
+    if not os.path.exists(PLAYIT_EXECUTABLE):
+        log_message('INFO', "The playit.gg agent is not installed.")
+        if input(f"{C.YELLOW}Would you like to download and install it now? (y/N): {C.RESET}").lower() == 'y':
+            os.makedirs(PLAYIT_DIR, exist_ok=True)
+            log_message('INFO', "Downloading the playit.gg agent for Linux (aarch64)...")
+            url = "https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-aarch64"
+            download_cmd = f"wget -O \"{PLAYIT_EXECUTABLE}\" \"{url}\" --progress=bar:force:noscroll"
+            
+            if run_command(download_cmd, timeout=300):
+                log_message('SUCCESS', "Download complete.")
+                run_command(f"chmod +x {PLAYIT_EXECUTABLE}")
+                log_message('SUCCESS', "Playit.gg agent is now executable.")
+            else:
+                log_message('ERROR', "Download failed. Please check your internet connection.")
+                return
+        else:
+            return
+    
+    log_message('INFO', "Running the one-time setup for playit.gg.")
+    log_message('WARNING', "You will be shown a URL. Please open this URL in a browser to claim this agent.")
+    print("\n" + "="*50)
+    print("Starting playit.gg agent. Follow the on-screen instructions.")
+    print("Press Ctrl+C when you are finished with the setup.")
+    print("="*50 + "\n")
+    input("Press Enter to begin the setup...")
+    
+    # Run the executable interactively
+    try:
+        subprocess.run([PLAYIT_EXECUTABLE], cwd=PLAYIT_DIR, check=True)
+        log_message('SUCCESS', "Playit.gg setup process finished.")
+    except KeyboardInterrupt:
+        log_message('INFO', "Exited playit.gg setup.")
+    except Exception as e:
+        log_message('ERROR', f"An error occurred during setup: {e}")
+
+    input("\nPress Enter to return to the main menu...")
+
+def stop_server():
+    """Stop the server and the playit.gg agent if running."""
+    print_header()
+    config = load_config()
+    
+    # Stop playit.gg agent if it's running
+    if config.get('playit_enabled', False) and is_playit_running(config.get('server_name', 'default')):
+        log_message('INFO', "Stopping playit.gg agent...")
+        playit_screen_name = get_playit_screen_name(config.get('server_name', 'default'))
+        run_command(f"screen -S {playit_screen_name} -X quit")
+        log_message('SUCCESS', "Playit.gg agent stopped.")
+    
+    # Stop the Minecraft server
+    if is_server_running():
+        log_message('INFO', "Stopping server...")
+        run_command(f'screen -S {SCREEN_SESSION_NAME} -p 0 -X stuff "stop\n"')
+        time.sleep(3)
+        log_message('SUCCESS', "Server stopped")
+    else:
+        log_message('INFO', "Server is not running")
+    input("Press Enter to continue...")
 
 def start_server():
-    """Enhanced server startup with multi-flavor support."""
+    """Enhanced server startup with multi-flavor support and playit.gg integration."""
     print_header()
 
     if is_server_running():
@@ -1107,6 +1229,26 @@ def start_server():
         log_message('WARNING', f"RAM allocation ({ram_mb}MB) exceeds safe limit")
         if input("Continue anyway? (y/N): ").lower() != 'y':
             return
+
+    # New: Start playit.gg agent if enabled
+    if config.get('playit_enabled', False):
+        if not os.path.exists(PLAYIT_EXECUTABLE):
+            log_message('ERROR', "playit.gg is enabled, but the agent is not installed.")
+            log_message('INFO', "Please run the 'Playit.gg Setup' from the main menu.")
+            input("\nPress Enter to continue...")
+            return
+        
+        playit_screen_name = get_playit_screen_name(config.get('server_name', 'default'))
+        if is_playit_running(config.get('server_name', 'default')):
+            log_message('WARNING', "Playit.gg agent is already running for this server.")
+        else:
+            log_message('INFO', "Starting playit.gg agent...")
+            playit_cmd = f"screen -dmS {playit_screen_name} {PLAYIT_EXECUTABLE}"
+            if run_command(playit_cmd):
+                log_message('SUCCESS', "Playit.gg agent started in a screen session.")
+                time.sleep(5) # Give it a moment to initialize
+            else:
+                log_message('ERROR', "Failed to start playit.gg agent.")
 
     log_message('INFO', f"Starting {SERVER_FLAVORS[server_flavor]['name']} server...")
 
@@ -1145,6 +1287,13 @@ def start_server():
         print(f"Version: {config.get('server_version', 'Unknown')}")
         print(f"Port: {config['server_settings']['port']}")
         print(f"Console: screen -r {SCREEN_SESSION_NAME}")
+        
+        # Show playit.gg status if enabled
+        if config.get('playit_enabled', False):
+            if is_playit_running(config.get('server_name', 'default')):
+                print(f"{C.GREEN}✅ Playit.gg agent is running{C.RESET}")
+            else:
+                print(f"{C.RED}❌ Playit.gg agent failed to start{C.RESET}")
     else:
         log_message('ERROR', "Server failed to start properly")
 
@@ -1183,22 +1332,15 @@ def main():
             print(f"  {C.BOLD}3.{C.RESET} Install/Change Server")
             print(f"  {C.BOLD}4.{C.RESET} Configure Server")
             print(f"  {C.BOLD}5.{C.RESET} Server Console")
-            print(f"  {C.BOLD}6.{C.RESET} Exit")
+            print(f"  {C.BOLD}6.{C.RESET} Playit.gg Setup")
+            print(f"  {C.BOLD}7.{C.RESET} Exit")
 
             choice = input(f"\n{C.BOLD}Choose option: {C.RESET}").strip()
 
             if choice == '1':
                 start_server()
             elif choice == '2':
-                # Basic stop functionality
-                if is_server_running():
-                    log_message('INFO', "Stopping server...")
-                    run_command(f'screen -S {SCREEN_SESSION_NAME} -p 0 -X stuff "stop\n"')
-                    time.sleep(3)
-                    log_message('SUCCESS', "Server stopped")
-                else:
-                    log_message('INFO', "Server is not running")
-                input("Press Enter to continue...")
+                stop_server()
             elif choice == '3':
                 install_server()
             elif choice == '4':
@@ -1214,6 +1356,8 @@ def main():
                     log_message('WARNING', "Server is not running")
                     input("Press Enter to continue...")
             elif choice == '6':
+                playit_manager()
+            elif choice == '7':
                 print(f"\n{C.CYAN}Goodbye! 👋{C.RESET}")
                 sys.exit(0)
             else:
