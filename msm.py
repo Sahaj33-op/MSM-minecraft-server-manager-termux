@@ -722,7 +722,7 @@ def get_java_path(mc_version: str) -> Optional[str]:
 def check_dependencies():
     """Check for essential command-line tools."""
     logger.log('INFO', "Checking system dependencies...")
-    deps = {'wget': False, 'screen': False, 'java': False, 'php': False}
+    deps = {'wget': False, 'screen': False, 'openjdk-17': False, 'php': False}
     for dep in deps:
         if shutil.which(dep):
             deps[dep] = True
