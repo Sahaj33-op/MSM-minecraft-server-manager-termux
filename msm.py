@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-Enhanced Minecraft Server Manager (MSM) v5.2 for Termux
+Enhanced Minecraft Server Manager (MSM) v2.1 for Termux
 Advanced Multi-Server, Multi-Flavor Manager with Enterprise Features
 
 Supports: Paper, Purpur, Folia, Vanilla, PocketMine-MP, Fabric, Quilt
@@ -722,7 +722,7 @@ def get_java_path(mc_version: str) -> Optional[str]:
 def check_dependencies():
     """Check for essential command-line tools."""
     logger.log('INFO', "Checking system dependencies...")
-    deps = {'wget': False, 'screen': False, 'openjdk-17': False, 'php': False}
+    deps = {'wget': False, 'screen': False, 'java': False, 'php': False}
     for dep in deps:
         if shutil.which(dep):
             deps[dep] = True
@@ -2093,7 +2093,7 @@ def get_java_path(mc_version: str) -> Optional[str]:
 def check_dependencies():
     """Check for essential command-line tools."""
     logger.log('INFO', "Checking system dependencies...")
-    deps = {'wget': False, 'screen': False, 'openjdk-17': False, 'php': False}
+    deps = {'wget': False, 'screen': False, 'java': False, 'php': False}
     for dep in deps:
         if shutil.which(dep):
             deps[dep] = True
