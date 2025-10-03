@@ -2,11 +2,9 @@
 
 <div align="center">
 
-![MSM Logo](https://img.shields.io/badge/MSM-v5.2-brightgreen?style=forblue?style=for-the-badge&logo=python&logoColor-Compatible-black?style=for-the-badgeimg.shields.io/badge/License-MIT-yellow?style=/badge/Size-120KB-orange?style=for-the-badge) **The Ultimate Multi-Server Minecraft Manager for Termux**
+![MSM Logo](https://img.shields.io/badge/MSM-v2-brightgreen?style=forblue?style=for-the-badge&logo=python&logoColor-Compatible-black?style=for-the-badgeimg.shields.io/badge/License-MIT-yellow?style=/badge/Size-120KB-orange?style=for-the-badge) **The Ultimate Multi-Server Minecraft Manager for Termux**
 
 **90+ Features -  7 Server Types -  Real-Time Monitoring -  SQLite Database -  Professional Logging**
-
-[Features](#-features) -  [Installation](#-installation) -  [Usage](#-usage) -  [Supported Servers](#-supported-servers) -  [Screenshots](#-screenshots) -  [Contributing](#-contributing)
 
 </div>
 
@@ -29,7 +27,9 @@ Enhanced Minecraft Server Manager (MSM) v2 is a **professional, enterprise-grade
 - 🚀 **Performance Optimized**: G1GC tuning, threaded monitoring, connection pooling
 - 📱 **Mobile-First**: Designed specifically for Termux with low resource footprint
 
-## ✨ Features
+<details>
+<summary><h2> ✨ Features (detailed) </h2> </summary>
+
 
 ### 🎯 Core Features
 
@@ -179,6 +179,8 @@ Enhanced Minecraft Server Manager (MSM) v2 is a **professional, enterprise-grade
 - `openjdk-17` or `openjdk-21` (for Java servers)
 - Python packages: `requests`, `psutil`
 
+</details>
+
 ## 🚀 Installation
 
 ### Method 1: Quick Install (Recommended)
@@ -278,8 +280,8 @@ Main Menu:
 
 Choose option (1-9, 0):
 ```
-
-### Menu Options Explained
+<details>
+<summary><h3> Menu Options Explained </h3> </summary>
 
 #### **1. 🚀 Start Server**
 - Launches server with optimized Java arguments
@@ -357,6 +359,8 @@ Displays comprehensive stats:
 - Saves configuration
 - Stops monitoring threads
 - Returns to shell
+
+</details>
 
 ### Quick Start Guide
 
@@ -478,8 +482,8 @@ sqlite> SELECT * FROM performance_metrics ORDER BY timestamp DESC LIMIT 10;
 # Check system resources
 htop  # Install: pkg install htop
 ```
-
-## 🎮 Supported Servers
+<details>
+<summary><h2> 🎮 Supported Servers </h2> </summary>
 
 ### Java Edition Servers
 
@@ -518,7 +522,7 @@ htop  # Install: pkg install htop
 - **🔧 Modded**: Fabric/Quilt - Lightweight modding platforms
 - **📱 Bedrock**: PocketMine-MP - For mobile/console cross-play
 - **🎯 Pure Vanilla**: Vanilla - Official unmodified experience
-
+</details>
 ## ⚙️ Configuration
 
 ### Configuration File
@@ -679,8 +683,9 @@ Example `msm.log` entries:
 2025-10-02 16:30:29 [SUCCESS] Server 'survival' started successfully!
 2025-10-02 16:31:30 [DEBUG] Performance: RAM=1847MB, CPU=23%, Players=0
 ```
+<details>
+<summary><h2> 🔍 Troubleshooting </h2> </summary>
 
-## 🔍 Troubleshooting
 
 ### Common Issues & Solutions
 
@@ -884,12 +889,15 @@ If issues persist:
 
 4. **Open GitHub Issue** with debug_report.txt attached
 
-## 📊 Screenshots
+</details>
+
+<details>
+<summary><h2> 📊 Screenshots </h2> </summary>
 
 ### Main Menu
 ```
 ═══════════════════════════════════════════════════════════════════
-         Enhanced Minecraft Server Manager v5.2
+         Enhanced Minecraft Server Manager v2
    Paper | Purpur | Folia | Vanilla | Fabric | Quilt | PocketMine
 ═══════════════════════════════════════════════════════════════════
 
@@ -927,8 +935,10 @@ Available PaperMC Versions (Page 1/8):
 
 Navigation: [n]ext, [p]rev, [s]napshots, [latest], or number
 ```
+</details>
 
-## 🤝 Contributing
+<details>
+<summary><h2> 🤝 Contributing </h2> </summary>
 
 Contributions are welcome! Whether it's bug reports, feature requests, or code contributions, we appreciate your help.
 
@@ -988,8 +998,10 @@ Contributions are welcome! Whether it's bug reports, feature requests, or code c
 - 🎨 UI enhancements
 - 🚀 Performance optimizations
 - 🧪 Unit tests
+</details>
 
-## 📄 License
+<details>
+<summary><h2> 📄 License </h2> </summary>
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
@@ -1012,8 +1024,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
 ```
+</details>
 
-## 🙏 Acknowledgments
+<details>
+<summary><h2> 🙏 Acknowledgments </h2> </summary>
 
 Special thanks to:
 
@@ -1033,6 +1047,8 @@ Special thanks to:
 - [psutil](https://github.com/giampaolo/psutil) - System monitoring
 - [SQLite](https://sqlite.org/) - Database engine
 - Love ❤️ and lots of ☕
+</details>
+
 
 ## 📞 Support & Community
 
