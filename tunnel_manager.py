@@ -11,7 +11,6 @@ import threading
 import json
 import hashlib
 import shutil
-import select
 import psutil
 import socket
 import platform
@@ -26,12 +25,18 @@ from contextlib import contextmanager
 import asyncio
 import concurrent.futures
 
-# Conditional import for fcntl (Unix-only)
+# Conditional imports for platform-specific modules
 try:
     import fcntl
     FCNTL_AVAILABLE = True
 except ImportError:
     FCNTL_AVAILABLE = False
+
+try:
+    import select
+    SELECT_AVAILABLE = True
+except ImportError:
+    SELECT_AVAILABLE = False
 
 from config import CredentialsManager, get_config_root
 from ui import UI, clear_screen, print_header, print_info, print_success, print_warning, print_error
@@ -219,6 +224,9 @@ class RobustTunnelManager:
         self.tunnel_metrics_file = self.config_root / "tunnel_metrics.json"
         self.recovery_log = self.config_root / "recovery.log"
         
+        # Thread safety
+        self._config_lock = threading.RLock()
+        
         # State management
         self.current_config: Optional[TunnelConfig] = None
         self.health_monitor = TunnelHealthMonitor(self)
@@ -268,35 +276,40 @@ class RobustTunnelManager:
         lock_file = None
         
         try:
-            # Use file locking on Unix systems, simple file existence check on Windows
             if FCNTL_AVAILABLE:
-                import fcntl
-                lock_file = open(self.tunnel_lockfile, 'w')
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                lock_acquired = True
+                try:
+                    import fcntl
+                    lock_file = open(self.tunnel_lockfile, 'w')
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    lock_acquired = True
+                except BlockingIOError:
+                    raise RuntimeError("Another tunnel operation is in progress")
             else:
-                # On Windows, use a simple file existence check
+                # Windows fallback
                 if self.tunnel_lockfile.exists():
-                    # Check if the lock file is stale (older than 1 minute)
                     import time
+                    # Check if the lock file is stale (older than 1 minute)
                     if time.time() - self.tunnel_lockfile.stat().st_mtime < 60:
                         raise RuntimeError("Another tunnel operation is in progress")
+                
                 # Create lock file
                 self.tunnel_lockfile.touch()
                 lock_acquired = True
                 
             yield
-        except BlockingIOError:
-            raise RuntimeError("Another tunnel operation is in progress")
+            
         finally:
             if lock_acquired:
                 if FCNTL_AVAILABLE and lock_file:
-                    import fcntl
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-                    lock_file.close()
-                else:
-                    # On Windows, remove the lock file
-                    self.tunnel_lockfile.unlink(missing_ok=True)
+                    try:
+                        import fcntl
+                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                        lock_file.close()
+                    except:
+                        pass
+                
+                # Clean up lock file
+                self.tunnel_lockfile.unlink(missing_ok=True)
     
     def tunneling_menu(self):
         """Enhanced tunneling manager menu with detailed status."""
@@ -519,12 +532,13 @@ class RobustTunnelManager:
         return False
     
     def _enhanced_output_monitor(self, process: subprocess.Popen):
-        """Enhanced output monitoring with pattern matching and logging."""
-        # Check if we have a current config before accessing attributes
-        if not self.current_config:
+        """Enhanced output monitoring with cross-platform support."""
+        # Thread-safe access to current config
+        current_config = self.get_tunnel_config()
+        if not current_config:
             return
             
-        patterns = self.service_patterns.get(self.current_config.service, [])
+        patterns = self.service_patterns.get(current_config.service, [])
         claim_patterns = [
             r"(https?://[a-zA-Z0-9.-]+\.playit\.gg/claim/[a-zA-Z0-9-]+)",
             r"(https?://[a-zA-Z0-9.-]+/claim/[a-zA-Z0-9-]+)"
@@ -532,24 +546,46 @@ class RobustTunnelManager:
         
         try:
             while True:
-                # Use select for non-blocking read with timeout
                 if process.stdout:
-                    ready, _, _ = select.select([process.stdout], [], [], 1.0)
-                    
-                    if ready:
+                    # Platform-aware non-blocking read
+                    if os.name == 'nt' or not SELECT_AVAILABLE:  # Windows or select not available
+                        # Use polling approach
+                        if process.poll() is not None:
+                            break
                         line = process.stdout.readline()
                         if not line:
-                            break
-                            
-                        # Log all output
-                        self._append_to_log(line.strip())
-                        
-                        # Extract URLs
-                        self._extract_urls_from_line(line, patterns, claim_patterns)
-                
-                # Check if process is still running
-                if process.poll() is not None:
-                    break
+                            time.sleep(0.1)
+                            continue
+                    else:  # Unix-like with select available
+                        try:
+                            if SELECT_AVAILABLE:
+                                import select
+                                ready, _, _ = select.select([process.stdout], [], [], 1.0)
+                                if not ready:
+                                    if process.poll() is not None:
+                                        break
+                                    continue
+                                line = process.stdout.readline()
+                                if not line:
+                                    break
+                            else:
+                                # Fallback if select is not available even on Unix
+                                if process.poll() is not None:
+                                    break
+                                line = process.stdout.readline()
+                                if not line:
+                                    time.sleep(0.1)
+                                    continue
+                        except Exception:
+                            # Handle select errors gracefully
+                            if process.poll() is not None:
+                                break
+                            time.sleep(0.1)
+                            continue
+                    
+                    # Process the line
+                    self._append_to_log(line.strip())
+                    self._extract_urls_from_line(line, patterns, claim_patterns, current_config)
                     
         except Exception as e:
             log(f"Output monitoring error: {e}")
@@ -558,13 +594,21 @@ class RobustTunnelManager:
             if process.poll() is None:
                 try:
                     process.terminate()
+                    process.wait(timeout=5)
                 except:
-                    pass
+                    try:
+                        process.kill()
+                    except:
+                        pass
     
-    def _extract_urls_from_line(self, line: str, patterns: List[str], claim_patterns: List[str]):
+    def _extract_urls_from_line(self, line: str, patterns: List[str], claim_patterns: List[str], current_config: Optional[TunnelConfig] = None):
         """Extract tunnel URLs and claim URLs from output line."""
+        # Use provided config or get current config thread-safely
+        if current_config is None:
+            current_config = self.get_tunnel_config()
+            
         # Check if we have a current config
-        if not self.current_config:
+        if not current_config:
             return
             
         # Check for claim URLs first (playit.gg specific)
@@ -572,7 +616,7 @@ class RobustTunnelManager:
             match = re.search(pattern, line)
             if match:
                 claim_url = match.group(1)
-                self.current_config.claim_url = claim_url
+                current_config.claim_url = claim_url
                 log(f"Claim URL found: {claim_url}")
                 self._save_tunnel_config()
                 
@@ -583,20 +627,24 @@ class RobustTunnelManager:
                 url = match.group(1)
                 
                 # Normalize URL format
-                url = self._normalize_tunnel_url(url)
+                url = self._normalize_tunnel_url(url, current_config)
                 
-                if url != self.current_config.url:
-                    self.current_config.url = url
+                if url != current_config.url:
+                    current_config.url = url
                     log(f"Tunnel URL found: {url}")
                     self._save_tunnel_config()
                     break
 
-    def _normalize_tunnel_url(self, url: str) -> str:
+    def _normalize_tunnel_url(self, url: str, current_config: Optional[TunnelConfig] = None) -> str:
         """Normalize tunnel URL format based on service."""
-        if not self.current_config:
+        # Use provided config or get current config thread-safely
+        if current_config is None:
+            current_config = self.get_tunnel_config()
+            
+        if not current_config:
             return url
             
-        service = self.current_config.service
+        service = current_config.service
         
         # Ensure proper protocol prefix
         if service in [TunnelService.PLAYIT, TunnelService.NGROK, TunnelService.PINGGY]:
@@ -613,21 +661,24 @@ class RobustTunnelManager:
     
     def _wait_for_tunnel_ready(self, timeout: int = 30) -> bool:
         """Wait for tunnel to be ready with timeout."""
-        # Check if we have a current config
-        if not self.current_config:
-            return False
-            
         start_time = time.time()
         
         while time.time() - start_time < timeout:
+            # Thread-safe access to current config
+            current_config = self.get_tunnel_config()
+            
+            # Check if we have a current config
+            if not current_config:
+                return False
+                
             # Check if we have a URL
-            if self.current_config.url:
+            if current_config.url:
                 return True
                 
             # For some services, just having the process running is enough
-            if (self.current_config.service == TunnelService.PINGGY and 
-                self.current_config.pid and 
-                self._is_process_running(self.current_config.pid)):
+            if (current_config.service == TunnelService.PINGGY and 
+                current_config.pid and 
+                self._is_process_running(current_config.pid)):
                 return True
                 
             time.sleep(1)
@@ -1110,29 +1161,33 @@ class RobustTunnelManager:
             os.environ["PATH"] = f"{path}{os.pathsep}{current_path}"
     
     def _stop_process_gracefully(self, pid: int):
-        """Stop a process gracefully with escalating signals."""
+        """Stop a process gracefully with platform awareness."""
         try:
-            # First, try SIGTERM
-            os.kill(pid, signal.SIGTERM)
-            
-            # Wait up to 10 seconds for graceful shutdown
-            for _ in range(10):
-                try:
-                    os.kill(pid, 0)  # Check if process still exists
-                    time.sleep(1)
-                except ProcessLookupError:
-                    log(f"Process {pid} terminated gracefully")
-                    return
-                    
-            # If still running, use SIGKILL
-            log(f"Process {pid} didn't respond to SIGTERM, using SIGKILL")
-            os.kill(pid, signal.SIGKILL)
-            
-            # Wait a bit more
-            time.sleep(2)
-            
+            if os.name == 'nt':  # Windows
+                import subprocess
+                result = subprocess.run(['taskkill', '/PID', str(pid), '/F'], 
+                                       capture_output=True, timeout=10)
+                if result.returncode != 0:
+                    log(f"Failed to kill process {pid} on Windows: {result.stderr}")
+            else:  # Unix-like
+                # First, try SIGTERM
+                os.kill(pid, signal.SIGTERM)
+                
+                # Wait up to 10 seconds for graceful shutdown
+                for _ in range(10):
+                    try:
+                        os.kill(pid, 0)
+                        time.sleep(1)
+                    except ProcessLookupError:
+                        log(f"Process {pid} terminated gracefully")
+                        return
+                        
+                # If still running, use SIGKILL
+                log(f"Process {pid} didn't respond to SIGTERM, using SIGKILL")
+                os.kill(pid, signal.SIGKILL)
+                time.sleep(2)
+                
         except ProcessLookupError:
-            # Process already gone
             log(f"Process {pid} already terminated")
         except Exception as e:
             log(f"Error stopping process {pid}: {e}")
@@ -1184,62 +1239,63 @@ class RobustTunnelManager:
             log(f"Error writing to tunnel log: {e}")
     
     def _save_tunnel_config(self):
-        """Save tunnel configuration to disk with atomic writes."""
-        if not self.current_config:
-            return
-            
-        try:
-            # Safely access metrics
-            metrics_data = {}
-            if self.current_config.metrics:
-                metrics_data = {
-                    "start_time": self.current_config.metrics.start_time.isoformat(),
-                    "connection_attempts": self.current_config.metrics.connection_attempts,
-                    "successful_connections": self.current_config.metrics.successful_connections,
-                    "failed_connections": self.current_config.metrics.failed_connections,
-                    "last_health_check": self.current_config.metrics.last_health_check.isoformat() if self.current_config.metrics.last_health_check else None,
-                    "uptime_seconds": self.current_config.metrics.uptime_seconds,
-                    "bytes_transferred": self.current_config.metrics.bytes_transferred,
-                    "restart_count": self.current_config.metrics.restart_count,
-                    "last_error": self.current_config.metrics.last_error,
-                    "response_times": self.current_config.metrics.response_times[-50:] if self.current_config.metrics.response_times else []  # Keep last 50
-                }
-            else:
-                # Default metrics data
-                metrics_data = {
-                    "start_time": datetime.now().isoformat(),
-                    "connection_attempts": 0,
-                    "successful_connections": 0,
-                    "failed_connections": 0,
-                    "last_health_check": None,
-                    "uptime_seconds": 0.0,
-                    "bytes_transferred": 0,
-                    "restart_count": 0,
-                    "last_error": None,
-                    "response_times": []
-                }
-            
-            config_data = {
-                "service": self.current_config.service.value,
-                "port": self.current_config.port,
-                "pid": self.current_config.pid,
-                "state": self.current_config.state.value,
-                "url": self.current_config.url,
-                "claim_url": self.current_config.claim_url,
-                "config_hash": self.current_config.config_hash,
-                "last_restart": self.current_config.last_restart.isoformat() if self.current_config.last_restart else None,
-                "metrics": metrics_data
-            }
-            
-            # Atomic write
-            temp_file = self.tunnel_config_file.with_suffix('.tmp')
-            with open(temp_file, 'w', encoding='utf-8') as f:
-                json.dump(config_data, f, indent=2)
+        """Save tunnel configuration to disk with atomic writes and thread safety."""
+        with self._config_lock:
+            if not self.current_config:
+                return
                 
-            temp_file.replace(self.tunnel_config_file)
-            
-        except Exception as e:
-            log(f"Error saving tunnel config: {e}")
+            try:
+                # Safely access metrics
+                metrics_data = {}
+                if self.current_config.metrics:
+                    metrics_data = {
+                        "start_time": self.current_config.metrics.start_time.isoformat(),
+                        "connection_attempts": self.current_config.metrics.connection_attempts,
+                        "successful_connections": self.current_config.metrics.successful_connections,
+                        "failed_connections": self.current_config.metrics.failed_connections,
+                        "last_health_check": self.current_config.metrics.last_health_check.isoformat() if self.current_config.metrics.last_health_check else None,
+                        "uptime_seconds": self.current_config.metrics.uptime_seconds,
+                        "bytes_transferred": self.current_config.metrics.bytes_transferred,
+                        "restart_count": self.current_config.metrics.restart_count,
+                        "last_error": self.current_config.metrics.last_error,
+                        "response_times": self.current_config.metrics.response_times[-50:] if self.current_config.metrics.response_times else []  # Keep last 50
+                    }
+                else:
+                    # Default metrics data
+                    metrics_data = {
+                        "start_time": datetime.now().isoformat(),
+                        "connection_attempts": 0,
+                        "successful_connections": 0,
+                        "failed_connections": 0,
+                        "last_health_check": None,
+                        "uptime_seconds": 0.0,
+                        "bytes_transferred": 0,
+                        "restart_count": 0,
+                        "last_error": None,
+                        "response_times": []
+                    }
+                
+                config_data = {
+                    "service": self.current_config.service.value,
+                    "port": self.current_config.port,
+                    "pid": self.current_config.pid,
+                    "state": self.current_config.state.value,
+                    "url": self.current_config.url,
+                    "claim_url": self.current_config.claim_url,
+                    "config_hash": self.current_config.config_hash,
+                    "last_restart": self.current_config.last_restart.isoformat() if self.current_config.last_restart else None,
+                    "metrics": metrics_data
+                }
+                
+                # Atomic write
+                temp_file = self.tunnel_config_file.with_suffix('.tmp')
+                with open(temp_file, 'w', encoding='utf-8') as f:
+                    json.dump(config_data, f, indent=2)
+                    
+                temp_file.replace(self.tunnel_config_file)
+                
+            except Exception as e:
+                log(f"Error saving tunnel config: {e}")
     
     def _load_tunnel_config(self):
         """Load tunnel configuration from disk."""
@@ -1432,8 +1488,9 @@ class RobustTunnelManager:
             return f"{seconds}s"
     
     def get_tunnel_config(self) -> Optional[TunnelConfig]:
-        """Get current tunnel configuration."""
-        return self.current_config
+        """Get current tunnel configuration thread-safely."""
+        with self._config_lock:
+            return self.current_config
     
     def cleanup(self):
         """Cleanup resources when shutting down."""
