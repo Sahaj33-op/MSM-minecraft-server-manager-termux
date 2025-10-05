@@ -945,12 +945,25 @@ class RobustTunnelManager:
                     print_error(f"Step {i} failed: {result.stderr[:100]}...")
                     return False
                     
-            # Verify installation
-            if shutil.which("playit") is not None:
+            # Verify installation and update PATH
+            playit_path = shutil.which("playit")
+            if playit_path is not None:
                 log("Playit successfully installed via APT")
                 print_success("✅ playit.gg installed successfully via APT!")
+                # Ensure the directory is in PATH
+                self._add_to_path(os.path.dirname(playit_path))
                 return True
             else:
+                # Check common installation paths
+                common_paths = ["/usr/bin/playit", "/usr/local/bin/playit"]
+                for path in common_paths:
+                    if os.path.exists(path) and os.access(path, os.X_OK):
+                        log(f"Playit found at {path}")
+                        print_success("✅ playit.gg installed successfully via APT!")
+                        # Add to PATH
+                        self._add_to_path(os.path.dirname(path))
+                        return True
+                
                 log("Playit installation completed but binary not found")
                 print_warning("Installation completed but playit command not found")
                 return False
@@ -1241,8 +1254,25 @@ exec "$PLAYIT_BINARY" "$@"
         try:
             # Check if playit command is available
             playit_path = shutil.which("playit")
+            
+            # If not found in PATH, check common installation locations
             if not playit_path:
-                log("playit command not found in PATH")
+                # Check common locations where APT might install playit
+                common_paths = [
+                    "/usr/bin/playit",
+                    "/usr/local/bin/playit",
+                    str(self.bin_dir / "playit")
+                ]
+                
+                for path in common_paths:
+                    if os.path.exists(path) and os.access(path, os.X_OK):
+                        playit_path = path
+                        # Add to PATH for current session
+                        self._add_to_path(os.path.dirname(path))
+                        break
+            
+            if not playit_path:
+                log("playit command not found in PATH or common locations")
                 return False
             
             log(f"Found playit at: {playit_path}")
@@ -1257,6 +1287,18 @@ exec "$PLAYIT_BINARY" "$@"
                 return True
             else:
                 log(f"Playit version check failed: {result.stderr}")
+                # Try again with full path in case PATH isn't updated
+                try:
+                    result2 = subprocess.run([playit_path, "--version"], 
+                                           capture_output=True, text=True, timeout=10)
+                    if result2.returncode == 0:
+                        version_output = result2.stdout.strip()
+                        log(f"Playit version check successful on retry: {version_output}")
+                        return True
+                    else:
+                        log(f"Playit version check failed on retry: {result2.stderr}")
+                except Exception as e:
+                    log(f"Playit version check retry failed: {e}")
                 return False
                 
         except Exception as e:
@@ -1398,7 +1440,25 @@ exec "$PLAYIT_BINARY" "$@"
         if not self.current_config:
             return []
             
-        playit_path = shutil.which("playit") or str(self.bin_dir / "playit")
+        # Try to find playit in PATH first
+        playit_path = shutil.which("playit")
+        
+        # If not found, check common locations
+        if not playit_path:
+            common_paths = [
+                "/usr/bin/playit",
+                "/usr/local/bin/playit",
+                str(self.bin_dir / "playit")
+            ]
+            
+            for path in common_paths:
+                if os.path.exists(path) and os.access(path, os.X_OK):
+                    playit_path = path
+                    break
+        
+        # If still not found, use default
+        if not playit_path:
+            playit_path = shutil.which("playit") or str(self.bin_dir / "playit")
         
         # Basic command
         command = [playit_path]
