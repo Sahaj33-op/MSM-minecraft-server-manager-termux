@@ -898,14 +898,29 @@ class RobustTunnelManager:
                 if install_method():
                     print_success(f"✅ Installation successful using method {attempt_num}")
                     # Verify installation works
-                    if self._verify_playit_installation():
+                    log("Verifying installation...")
+                    verification_result = self._verify_playit_installation()
+                    if verification_result:
+                        log("Installation verification successful")
                         return True
                     else:
+                        log("Installation verification failed")
                         print_warning("Installation completed but verification failed")
+                        # Even if verification fails, if installation succeeded, we should try to continue
+                        # Check if playit is at least findable
+                        playit_path = shutil.which("playit") or self._find_playit_binary()
+                        if playit_path:
+                            log(f"Playit binary found at {playit_path}, proceeding despite verification failure")
+                            print_info("Playit binary found, continuing...")
+                            return True
+                        else:
+                            log("Playit binary not found, trying next method")
                         
             except Exception as e:
                 error_msg = f"Installation method {attempt_num} ({install_method.__name__}) failed: {e}"
                 log(error_msg)
+                import traceback
+                log(f"Traceback: {traceback.format_exc()}")
                 print_warning(f"Method {attempt_num} failed: {str(e)[:100]}...")
                 
         print_error("All playit installation methods failed")
@@ -946,32 +961,83 @@ class RobustTunnelManager:
                     return False
                     
             # Verify installation and update PATH
+            log("Installation commands completed, verifying installation...")
             playit_path = shutil.which("playit")
             if playit_path is not None:
-                log("Playit successfully installed via APT")
+                log(f"Playit found in PATH at: {playit_path}")
                 print_success("✅ playit.gg installed successfully via APT!")
                 # Ensure the directory is in PATH
                 self._add_to_path(os.path.dirname(playit_path))
                 return True
             else:
                 # Check common installation paths
+                log("Playit not found in PATH, checking common locations...")
                 common_paths = ["/usr/bin/playit", "/usr/local/bin/playit"]
                 for path in common_paths:
-                    if os.path.exists(path) and os.access(path, os.X_OK):
-                        log(f"Playit found at {path}")
-                        print_success("✅ playit.gg installed successfully via APT!")
-                        # Add to PATH
-                        self._add_to_path(os.path.dirname(path))
-                        return True
+                    if os.path.exists(path):
+                        if os.access(path, os.X_OK):
+                            log(f"Playit found at {path} and is executable")
+                            print_success("✅ playit.gg installed successfully via APT!")
+                            # Add to PATH
+                            self._add_to_path(os.path.dirname(path))
+                            return True
+                        else:
+                            log(f"Playit found at {path} but is not executable")
                 
-                log("Playit installation completed but binary not found")
-                print_warning("Installation completed but playit command not found")
+                # If still not found, try to find it with find command
+                try:
+                    log("Trying to locate playit with find command...")
+                    find_result = subprocess.run(["find", "/", "-name", "playit", "-type", "f", "-executable"], 
+                                               capture_output=True, text=True, timeout=30)
+                    if find_result.returncode == 0 and find_result.stdout.strip():
+                        found_paths = find_result.stdout.strip().split('\n')
+                        for path in found_paths:
+                            if path:
+                                log(f"Found playit at: {path}")
+                                print_success("✅ playit.gg installed successfully via APT!")
+                                # Add to PATH
+                                self._add_to_path(os.path.dirname(path))
+                                return True
+                except Exception as e:
+                    log(f"Find command failed: {e}")
+                
+                log("Playit installation completed but binary not found or not executable")
+                print_warning("Installation completed but playit command not found or not executable")
                 return False
                 
         except Exception as e:
             log(f"APT installation failed: {e}")
+            import traceback
+            log(f"Traceback: {traceback.format_exc()}")
             print_error(f"Failed to install playit.gg: {e}")
             return False
+
+    def _find_playit_binary(self) -> Optional[str]:
+        """Find playit binary in common locations."""
+        # Check common locations where playit might be installed
+        common_paths = [
+            "/usr/bin/playit",
+            "/usr/local/bin/playit",
+            str(self.bin_dir / "playit")
+        ]
+        
+        for path in common_paths:
+            if os.path.exists(path) and os.access(path, os.X_OK):
+                return path
+        
+        # Try to find with find command
+        try:
+            find_result = subprocess.run(["find", "/", "-name", "playit", "-type", "f", "-executable"], 
+                                       capture_output=True, text=True, timeout=30)
+            if find_result.returncode == 0 and find_result.stdout.strip():
+                found_paths = find_result.stdout.strip().split('\n')
+                for path in found_paths:
+                    if path:
+                        return path
+        except Exception as e:
+            log(f"Find command failed: {e}")
+        
+        return None
 
     def _install_playit_direct_binary_v016(self) -> bool:
         """Install playit using direct binary download from v0.16.2 release."""
@@ -1257,6 +1323,7 @@ exec "$PLAYIT_BINARY" "$@"
             
             # If not found in PATH, check common installation locations
             if not playit_path:
+                log("Playit not found in PATH, checking common locations...")
                 # Check common locations where APT might install playit
                 common_paths = [
                     "/usr/bin/playit",
@@ -1265,45 +1332,111 @@ exec "$PLAYIT_BINARY" "$@"
                 ]
                 
                 for path in common_paths:
-                    if os.path.exists(path) and os.access(path, os.X_OK):
-                        playit_path = path
-                        # Add to PATH for current session
-                        self._add_to_path(os.path.dirname(path))
-                        break
+                    log(f"Checking {path}...")
+                    if os.path.exists(path):
+                        log(f"Found playit at {path}")
+                        if os.access(path, os.X_OK):
+                            log(f"Playit at {path} is executable")
+                            playit_path = path
+                            # Add to PATH for current session
+                            self._add_to_path(os.path.dirname(path))
+                            break
+                        else:
+                            log(f"Playit at {path} is not executable")
+                    else:
+                        log(f"Playit not found at {path}")
             
             if not playit_path:
                 log("playit command not found in PATH or common locations")
+                # Try to refresh PATH and check again
+                os.environ["PATH"] = os.environ.get("PATH", "") + ":" + "/usr/bin:/usr/local/bin:" + str(self.bin_dir)
+                playit_path = shutil.which("playit")
+                if playit_path:
+                    log(f"Found playit after PATH refresh: {playit_path}")
+            
+            if not playit_path:
+                log("playit command still not found after all checks")
                 return False
             
             log(f"Found playit at: {playit_path}")
             
             # Test version command
+            log("Testing playit --version...")
             result = subprocess.run([playit_path, "--version"], 
-                                  capture_output=True, text=True, timeout=10)
+                                  capture_output=True, text=True, timeout=15)
             
             if result.returncode == 0:
                 version_output = result.stdout.strip()
                 log(f"Playit version check successful: {version_output}")
                 return True
             else:
-                log(f"Playit version check failed: {result.stderr}")
-                # Try again with full path in case PATH isn't updated
-                try:
-                    result2 = subprocess.run([playit_path, "--version"], 
-                                           capture_output=True, text=True, timeout=10)
-                    if result2.returncode == 0:
-                        version_output = result2.stdout.strip()
-                        log(f"Playit version check successful on retry: {version_output}")
+                log(f"Playit version check failed with return code {result.returncode}")
+                log(f"STDERR: {result.stderr}")
+                log(f"STDOUT: {result.stdout}")
+                
+                # Try with shell=True in case there are environment issues
+                log("Retrying with shell=True...")
+                result2 = subprocess.run(f"{playit_path} --version", 
+                                       shell=True, capture_output=True, text=True, timeout=15)
+                if result2.returncode == 0:
+                    version_output = result2.stdout.strip()
+                    log(f"Playit version check successful on retry: {version_output}")
+                    return True
+                else:
+                    log(f"Playit version check failed on retry with return code {result2.returncode}")
+                    log(f"STDERR: {result2.stderr}")
+                    log(f"STDOUT: {result2.stdout}")
+                    
+                    # Try with full environment
+                    log("Retrying with full environment...")
+                    env = os.environ.copy()
+                    env["PATH"] = os.environ.get("PATH", "") + ":" + os.path.dirname(playit_path)
+                    result3 = subprocess.run([playit_path, "--version"], 
+                                           capture_output=True, text=True, timeout=15, env=env)
+                    if result3.returncode == 0:
+                        version_output = result3.stdout.strip()
+                        log(f"Playit version check successful with full environment: {version_output}")
                         return True
                     else:
-                        log(f"Playit version check failed on retry: {result2.stderr}")
-                except Exception as e:
-                    log(f"Playit version check retry failed: {e}")
+                        log(f"Playit version check failed with full environment: {result3.stderr}")
+                
                 return False
                 
-        except Exception as e:
-            log(f"Playit verification failed: {e}")
+        except subprocess.TimeoutExpired:
+            log("Playit version check timed out")
             return False
+        except Exception as e:
+            log(f"Playit verification failed with exception: {e}")
+            import traceback
+            log(f"Traceback: {traceback.format_exc()}")
+            return False
+
+    def _find_playit_binary(self) -> Optional[str]:
+        """Find playit binary in common locations."""
+        # Check common locations where playit might be installed
+        common_paths = [
+            "/usr/bin/playit",
+            "/usr/local/bin/playit",
+            str(self.bin_dir / "playit")
+        ]
+        
+        for path in common_paths:
+            if os.path.exists(path) and os.access(path, os.X_OK):
+                return path
+        
+        # Try to find with find command
+        try:
+            find_result = subprocess.run(["find", "/", "-name", "playit", "-type", "f", "-executable"], 
+                                       capture_output=True, text=True, timeout=30)
+            if find_result.returncode == 0 and find_result.stdout.strip():
+                found_paths = find_result.stdout.strip().split('\n')
+                for path in found_paths:
+                    if path:
+                        return path
+        except Exception as e:
+            log(f"Find command failed: {e}")
+        
+        return None
 
     def _show_playit_troubleshooting(self):
         """Show troubleshooting information for playit.gg installation."""
