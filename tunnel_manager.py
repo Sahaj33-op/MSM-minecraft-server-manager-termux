@@ -954,6 +954,83 @@ class RobustTunnelManager:
             log(f"Official APT installation failed: {e}")
             return False
 
+    def _install_playit(self) -> bool:
+        """Install playit.gg using the most reliable direct binary download method."""
+        try:
+            print_info("Installing playit.gg...")
+            log("Attempting direct binary installation")
+            
+            # Detect architecture
+            arch = self._detect_architecture_playit()
+            log(f"Detected architecture for playit: {arch}")
+            
+            # Map architecture to playit binary names
+            binary_urls = {
+                "amd64": "https://github.com/playit-cloud/playit-agent/releases/download/v0.16.2/playit-linux-amd64",
+                "i686": "https://github.com/playit-cloud/playit-agent/releases/download/v0.16.2/playit-linux-i686", 
+                "arm": "https://github.com/playit-cloud/playit-agent/releases/download/v0.16.2/playit-linux-armv7",
+                "arm64": "https://github.com/playit-cloud/playit-agent/releases/download/v0.16.2/playit-linux-aarch64"
+            }
+            
+            if arch not in binary_urls:
+                log(f"Unsupported architecture: {arch}")
+                print_error(f"Unsupported architecture: {arch}")
+                return False
+                
+            download_url = binary_urls[arch]
+            target_path = self.bin_dir / "playit"
+            
+            log(f"Downloading playit binary from: {download_url}")
+            print_info(f"Downloading playit.gg for {arch}...")
+            
+            # Download using curl with better error handling
+            result = subprocess.run([
+                "curl", "-L", "-f", "--connect-timeout", "30", 
+                "--max-time", "180", "-o", str(target_path), 
+                "--user-agent", "MSM-TunnelManager/1.2.0",
+                download_url
+            ], capture_output=True, text=True, timeout=200)
+            
+            if result.returncode != 0:
+                log(f"Download failed: {result.stderr}")
+                print_error("Failed to download playit.gg binary")
+                return False
+                
+            # Verify download
+            if not target_path.exists() or target_path.stat().st_size < 5000:  # At least 5KB
+                log("Downloaded file is too small or missing")
+                print_error("Downloaded playit.gg binary is invalid")
+                target_path.unlink(missing_ok=True)
+                return False
+                
+            # Make executable
+            target_path.chmod(0o755)
+            self._add_to_path(str(self.bin_dir))
+            
+            # Test the binary
+            test_result = subprocess.run([str(target_path), "--version"], 
+                                       capture_output=True, timeout=15)
+            if test_result.returncode != 0:
+                log(f"Binary test failed: {test_result.stderr}")
+                print_error("Downloaded playit.gg binary is not working")
+                target_path.unlink(missing_ok=True)
+                return False
+                
+            log(f"Successfully installed playit binary ({target_path.stat().st_size} bytes)")
+            print_success("✅ playit.gg installed successfully!")
+            return True
+            
+        except subprocess.TimeoutExpired:
+            log("Download timeout for playit.gg")
+            print_error("Timeout while downloading playit.gg")
+            target_path.unlink(missing_ok=True)
+            return False
+        except Exception as e:
+            log(f"Direct binary installation failed: {e}")
+            print_error(f"Failed to install playit.gg: {e}")
+            target_path.unlink(missing_ok=True)
+            return False
+
     def _install_playit_direct_binary_v016(self) -> bool:
         """Install playit using direct binary download from v0.16.2 release."""
         try:
