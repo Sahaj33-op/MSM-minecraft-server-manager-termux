@@ -11,10 +11,10 @@ import threading
 import json
 import hashlib
 import shutil
-import fcntl
 import select
 import psutil
 import socket
+import platform
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Union, cast
@@ -25,6 +25,13 @@ import logging
 from contextlib import contextmanager
 import asyncio
 import concurrent.futures
+
+# Conditional import for fcntl (Unix-only)
+try:
+    import fcntl
+    FCNTL_AVAILABLE = True
+except ImportError:
+    FCNTL_AVAILABLE = False
 
 from config import CredentialsManager, get_config_root
 from ui import UI, clear_screen, print_header, print_info, print_success, print_warning, print_error
@@ -242,6 +249,8 @@ class RobustTunnelManager:
             TunnelService.PINGGY: [
                 r"(tcp://[a-zA-Z0-9.-]+\.tcp\.pinggy\.io:\d+)",
                 r"([a-zA-Z0-9.-]+\.tcp\.pinggy\.io:\d+)",
+                r"(tcp://[a-zA-Z0-9]+\.a\.pinggy\.io:\d+)",
+                r"([a-zA-Z0-9]+\.a\.pinggy\.io:\d+)",
             ]
         }
         
@@ -259,17 +268,35 @@ class RobustTunnelManager:
         lock_file = None
         
         try:
-            lock_file = open(self.tunnel_lockfile, 'w')
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            lock_acquired = True
+            # Use file locking on Unix systems, simple file existence check on Windows
+            if FCNTL_AVAILABLE:
+                import fcntl
+                lock_file = open(self.tunnel_lockfile, 'w')
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_acquired = True
+            else:
+                # On Windows, use a simple file existence check
+                if self.tunnel_lockfile.exists():
+                    # Check if the lock file is stale (older than 1 minute)
+                    import time
+                    if time.time() - self.tunnel_lockfile.stat().st_mtime < 60:
+                        raise RuntimeError("Another tunnel operation is in progress")
+                # Create lock file
+                self.tunnel_lockfile.touch()
+                lock_acquired = True
+                
             yield
         except BlockingIOError:
             raise RuntimeError("Another tunnel operation is in progress")
         finally:
-            if lock_acquired and lock_file:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-                lock_file.close()
-                self.tunnel_lockfile.unlink(missing_ok=True)
+            if lock_acquired:
+                if FCNTL_AVAILABLE and lock_file:
+                    import fcntl
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                    lock_file.close()
+                else:
+                    # On Windows, remove the lock file
+                    self.tunnel_lockfile.unlink(missing_ok=True)
     
     def tunneling_menu(self):
         """Enhanced tunneling manager menu with detailed status."""
@@ -456,7 +483,8 @@ class RobustTunnelManager:
                     
                 self.current_config.pid = process.pid
                 self.current_config.state = TunnelState.STARTING
-                self.current_config.metrics.connection_attempts += 1
+                if self.current_config and self.current_config.metrics:
+                    self.current_config.metrics.connection_attempts += 1
                 
                 # Start enhanced output monitoring
                 monitor_thread = threading.Thread(
@@ -469,7 +497,8 @@ class RobustTunnelManager:
                 # Wait for tunnel to establish (with timeout)
                 if self._wait_for_tunnel_ready(timeout=30):
                     self.current_config.state = TunnelState.RUNNING
-                    self.current_config.metrics.successful_connections += 1
+                    if self.current_config and self.current_config.metrics:
+                        self.current_config.metrics.successful_connections += 1
                     log(f"Tunnel started successfully on attempt {attempt + 1}")
                     return True
                 else:
@@ -480,8 +509,9 @@ class RobustTunnelManager:
                 log(f"Tunnel start attempt {attempt + 1} failed: {e}")
                 # Check if we have a current config before accessing attributes
                 if self.current_config:
-                    self.current_config.metrics.failed_connections += 1
-                    self.current_config.metrics.last_error = str(e)
+                    if self.current_config and self.current_config.metrics:
+                        self.current_config.metrics.failed_connections += 1
+                        self.current_config.metrics.last_error = str(e)
                 
         # Check if we have a current config before accessing attributes
         if self.current_config:
@@ -655,7 +685,8 @@ class RobustTunnelManager:
         print_info("Restarting tunnel...")
         
         # Increment restart count
-        self.current_config.metrics.restart_count += 1
+        if self.current_config and self.current_config.metrics:
+            self.current_config.metrics.restart_count += 1
         self.current_config.last_restart = datetime.now()
         
         # Stop current tunnel
@@ -686,12 +717,12 @@ class RobustTunnelManager:
             "timestamp": datetime.now().isoformat(),
             "service": tunnel_config.service.value,
             "reason": "health_check_failure",
-            "restart_count": tunnel_config.metrics.restart_count
+            "restart_count": tunnel_config.metrics.restart_count if tunnel_config.metrics else 0
         }
         self._log_recovery_attempt(recovery_entry)
         
         # Check if we've exceeded max restart attempts
-        if tunnel_config.metrics.restart_count >= self.max_restart_attempts:
+        if tunnel_config.metrics and tunnel_config.metrics.restart_count >= self.max_restart_attempts:
             log(f"Max restart attempts ({self.max_restart_attempts}) exceeded")
             tunnel_config.state = TunnelState.FAILED
             return
@@ -709,7 +740,8 @@ class RobustTunnelManager:
         
         # Reset failure counters
         self.health_monitor.consecutive_failures = 0
-        self.current_config.metrics.restart_count = 0
+        if self.current_config and self.current_config.metrics:
+            self.current_config.metrics.restart_count = 0
         
         # Attempt restart
         self.restart_tunnel()
@@ -788,43 +820,79 @@ class RobustTunnelManager:
     
     def _install_playit_curl(self) -> bool:
         """Install playit using curl (primary method)."""
-        commands = [
-            ["curl", "-SsL", "https://playit.gg/install.sh", "-o", "/tmp/playit_install.sh"],
-            ["chmod", "+x", "/tmp/playit_install.sh"],
-            ["bash", "/tmp/playit_install.sh"]
-        ]
-        
-        for cmd in commands:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        try:
+            # Try direct binary download first (more reliable)
+            arch = self._detect_architecture()
+            base_url = "https://github.com/playit-cloud/playit-agent/releases/latest/download"
+            
+            binary_name = f"playit-linux_{arch}"
+            download_url = f"{base_url}/{binary_name}"
+            target_path = self.bin_dir / "playit"
+            
+            # Download binary
+            result = subprocess.run([
+                "curl", "-L", "-o", str(target_path), download_url
+            ], capture_output=True, text=True, timeout=120)
+            
             if result.returncode != 0:
-                raise Exception(f"Command failed: {' '.join(cmd)}")
+                raise Exception(f"Download failed: {result.stderr}")
                 
-        return shutil.which("playit") is not None
+            # Make executable
+            target_path.chmod(0o755)
+            
+            # Add to PATH if not already there
+            self._add_to_path(str(self.bin_dir))
+            
+            return target_path.exists() and target_path.stat().st_size > 0
+        except Exception as e:
+            log(f"Direct binary download failed: {e}")
+            
+        # Fallback to script installation
+        try:
+            commands = [
+                ["curl", "-SsL", "https://playit.gg/install.sh", "-o", "/tmp/playit_install.sh"],
+                ["chmod", "+x", "/tmp/playit_install.sh"],
+                ["bash", "/tmp/playit_install.sh"]
+            ]
+            
+            for cmd in commands:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                if result.returncode != 0:
+                    raise Exception(f"Command failed: {' '.join(cmd)}")
+                    
+            return shutil.which("playit") is not None
+        except Exception as e:
+            log(f"Script installation failed: {e}")
+            return False
     
     def _install_playit_wget(self) -> bool:
         """Install playit using wget (fallback method)."""
-        arch = self._detect_architecture()
-        base_url = "https://github.com/playit-cloud/playit-agent/releases/latest/download"
-        
-        binary_name = f"playit-linux_{arch}"
-        download_url = f"{base_url}/{binary_name}"
-        target_path = self.bin_dir / "playit"
-        
-        # Download binary
-        result = subprocess.run([
-            "wget", "-O", str(target_path), download_url
-        ], capture_output=True, text=True, timeout=120)
-        
-        if result.returncode != 0:
-            raise Exception(f"Download failed: {result.stderr}")
+        try:
+            arch = self._detect_architecture()
+            base_url = "https://github.com/playit-cloud/playit-agent/releases/latest/download"
             
-        # Make executable
-        target_path.chmod(0o755)
-        
-        # Add to PATH if not already there
-        self._add_to_path(str(self.bin_dir))
-        
-        return target_path.exists() and target_path.stat().st_size > 0
+            binary_name = f"playit-linux_{arch}"
+            download_url = f"{base_url}/{binary_name}"
+            target_path = self.bin_dir / "playit"
+            
+            # Download binary
+            result = subprocess.run([
+                "wget", "-O", str(target_path), download_url
+            ], capture_output=True, text=True, timeout=120)
+            
+            if result.returncode != 0:
+                raise Exception(f"Download failed: {result.stderr}")
+                
+            # Make executable
+            target_path.chmod(0o755)
+            
+            # Add to PATH if not already there
+            self._add_to_path(str(self.bin_dir))
+            
+            return target_path.exists() and target_path.stat().st_size > 0
+        except Exception as e:
+            log(f"Wget installation failed: {e}")
+            return False
     
     def _install_playit_package_manager(self) -> bool:
         """Install playit using system package manager (tertiary method)."""
@@ -1121,16 +1189,10 @@ class RobustTunnelManager:
             return
             
         try:
-            config_data = {
-                "service": self.current_config.service.value,
-                "port": self.current_config.port,
-                "pid": self.current_config.pid,
-                "state": self.current_config.state.value,
-                "url": self.current_config.url,
-                "claim_url": self.current_config.claim_url,
-                "config_hash": self.current_config.config_hash,
-                "last_restart": self.current_config.last_restart.isoformat() if self.current_config.last_restart else None,
-                "metrics": {
+            # Safely access metrics
+            metrics_data = {}
+            if self.current_config.metrics:
+                metrics_data = {
                     "start_time": self.current_config.metrics.start_time.isoformat(),
                     "connection_attempts": self.current_config.metrics.connection_attempts,
                     "successful_connections": self.current_config.metrics.successful_connections,
@@ -1140,8 +1202,33 @@ class RobustTunnelManager:
                     "bytes_transferred": self.current_config.metrics.bytes_transferred,
                     "restart_count": self.current_config.metrics.restart_count,
                     "last_error": self.current_config.metrics.last_error,
-                    "response_times": self.current_config.metrics.response_times[-50:]  # Keep last 50
+                    "response_times": self.current_config.metrics.response_times[-50:] if self.current_config.metrics.response_times else []  # Keep last 50
                 }
+            else:
+                # Default metrics data
+                metrics_data = {
+                    "start_time": datetime.now().isoformat(),
+                    "connection_attempts": 0,
+                    "successful_connections": 0,
+                    "failed_connections": 0,
+                    "last_health_check": None,
+                    "uptime_seconds": 0.0,
+                    "bytes_transferred": 0,
+                    "restart_count": 0,
+                    "last_error": None,
+                    "response_times": []
+                }
+            
+            config_data = {
+                "service": self.current_config.service.value,
+                "port": self.current_config.port,
+                "pid": self.current_config.pid,
+                "state": self.current_config.state.value,
+                "url": self.current_config.url,
+                "claim_url": self.current_config.claim_url,
+                "config_hash": self.current_config.config_hash,
+                "last_restart": self.current_config.last_restart.isoformat() if self.current_config.last_restart else None,
+                "metrics": metrics_data
             }
             
             # Atomic write
