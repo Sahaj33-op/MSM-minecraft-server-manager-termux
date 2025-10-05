@@ -42,17 +42,27 @@ class TunnelManager:
                     print(f"  URL: {UI.colors.CYAN}{status['url']}{UI.colors.RESET}")
                 else:
                     print(f"  URL: {UI.colors.YELLOW}Checking... (see logs for claim URL){UI.colors.RESET}")
-                    # Show last few lines of tunnel log for claim URL
+                    # Show claim URL if available
+                    claim_file = self.tunnel_urlfile.with_name("tunnel_claim.txt")
+                    if claim_file.exists():
+                        try:
+                            claim_url = claim_file.read_text().strip()
+                            if claim_url:
+                                print(f"  {UI.colors.CYAN}Claim URL: {claim_url}{UI.colors.RESET}")
+                        except Exception:
+                            pass
+                    # Show last few lines of tunnel log for any URLs or instructions
                     if self.tunnel_logfile.exists():
                         try:
                             lines = self.tunnel_logfile.read_text().strip().split('\n')
-                            # Show last 5 lines
-                            for line in lines[-5:]:
-                                if 'claim' in line.lower() or 'http' in line:
-                                    print(f"    {UI.colors.GRAY}{line}{UI.colors.RESET}")
-                                    break
-                        except Exception:
-                            pass
+                            # Show last 10 lines
+                            print(f"  {UI.colors.GRAY}Recent log output:{UI.colors.RESET}")
+                            for line in lines[-10:]:
+                                # Show lines that might contain useful information
+                                if any(keyword in line.lower() for keyword in ['http', 'tcp', 'url', 'connect', 'tunnel', 'forwarding', 'addr']):
+                                    print(f"    {UI.colors.GRAY}{line.strip()}{UI.colors.RESET}")
+                        except Exception as e:
+                            print(f"    {UI.colors.GRAY}Error reading log: {e}{UI.colors.RESET}")
                 print(f"\n{UI.colors.YELLOW}5. Stop active tunnel{UI.colors.RESET}\n")
             else:
                 print(f"{UI.colors.GRAY}No active tunnel{UI.colors.RESET}\n")
@@ -105,6 +115,9 @@ class TunnelManager:
                         url_content = self.tunnel_urlfile.read_text().strip()
                         if url_content:
                             url = url_content
+                    else:
+                        # Fallback: Try to extract URL from log file if monitoring missed it
+                        url = self._extract_url_from_log(service)
                     
                     return {
                         "pid": pid,
@@ -141,10 +154,12 @@ class TunnelManager:
                 pids = result.stdout.strip().split('\n')
                 if pids:
                     pid = int(pids[0])
+                    # Try to extract URL from log as fallback
+                    url = self._extract_url_from_log("ngrok")
                     return {
                         "pid": pid,
                         "service": "ngrok",
-                        "url": None
+                        "url": url
                     }
                 
             # Check for cloudflared process
@@ -154,10 +169,12 @@ class TunnelManager:
                 pids = result.stdout.strip().split('\n')
                 if pids:
                     pid = int(pids[0])
+                    # Try to extract URL from log as fallback
+                    url = self._extract_url_from_log("cloudflared")
                     return {
                         "pid": pid,
                         "service": "cloudflared",
-                        "url": None
+                        "url": url
                     }
                 
             # Check for pinggy SSH process
@@ -167,15 +184,82 @@ class TunnelManager:
                 pids = result.stdout.strip().split('\n')
                 if pids:
                     pid = int(pids[0])
+                    # Try to extract URL from log as fallback
+                    url = self._extract_url_from_log("pinggy")
                     return {
                         "pid": pid,
                         "service": "pinggy",
-                        "url": None
+                        "url": url
                     }
         except Exception as e:
             # Log the error but don't fail
             log(f"Error detecting tunnel processes: {e}")
             pass
+            
+        return None
+    
+    def _extract_url_from_log(self, service_name):
+        """Extract URL from tunnel log file as fallback."""
+        if not self.tunnel_logfile.exists():
+            return None
+            
+        try:
+            import re
+            
+            # Service-specific patterns for log file extraction
+            log_patterns = {
+                "playit.gg": [
+                    r"(tcp://[a-z0-9-]+\.playit\.gg:\d+)",
+                    r"(tcp://[a-zA-Z0-9.-]+\.playit\.gg:\d+)",
+                    r"([a-zA-Z0-9.-]+\.playit\.gg:\d+)",
+                    r"(https?://[a-zA-Z0-9.-]+\.playit\.gg:\d+)",
+                    r"([a-zA-Z0-9.-]+\.joinmc\.link)",
+                    r"(https?://[a-zA-Z0-9.-]+\.joinmc\.link)"
+                ],
+                "ngrok": [
+                    r"(tcp://[0-9]+\.tcp\.[a-z0-9]+\.ngrok\.io:\d+)",
+                    r"([0-9]+\.tcp\.[a-z0-9]+\.ngrok\.io:\d+)",
+                    r"(https?://[0-9]+\.tcp\.[a-z0-9]+\.ngrok\.io:\d+)",
+                    r"(tcp://[a-zA-Z0-9.-]+\.ngrok\.io:\d+)",
+                    r"([a-zA-Z0-9.-]+\.ngrok\.io:\d+)"
+                ],
+                "cloudflared": [
+                    r"(https://[a-z0-9-]+\.trycloudflare\.com)",
+                    r"(https://[a-zA-Z0-9.-]+\.trycloudflare\.com)",
+                    r"(https?://[a-zA-Z0-9.-]+\.trycloudflare\.com)"
+                ],
+                "pinggy": [
+                    r"(tcp://[a-z0-9-]+\.tcp\.pinggy\.io:\d+)",
+                    r"(tcp://[a-zA-Z0-9.-]+\.tcp\.pinggy\.io:\d+)",
+                    r"([a-zA-Z0-9.-]+\.tcp\.pinggy\.io:\d+)",
+                    r"(https?://[a-zA-Z0-9.-]+\.tcp\.pinggy\.io:\d+)"
+                ]
+            }
+            
+            patterns = log_patterns.get(service_name, [])
+            log_content = self.tunnel_logfile.read_text()
+            
+            # Try to find URL in log content
+            for pattern in patterns:
+                matches = re.findall(pattern, log_content)
+                if matches:
+                    url = matches[0]  # Take the first match
+                    # Ensure proper protocol prefix
+                    if service_name in ["playit.gg", "ngrok", "pinggy"] and not url.startswith(("tcp://", "https://")):
+                        if ".joinmc.link" in url:
+                            url = "https://" + url
+                        else:
+                            url = "tcp://" + url
+                    elif service_name == "cloudflared" and not url.startswith("https://"):
+                        url = "https://" + url
+                    
+                    # Save the extracted URL
+                    self.tunnel_urlfile.write_text(url)
+                    log(f"Extracted {service_name} URL from log: {url}")
+                    return url
+                    
+        except Exception as e:
+            log(f"Error extracting URL from log: {e}")
             
         return None
     
@@ -189,25 +273,48 @@ class TunnelManager:
         
         try:
             print_info(f"Stopping {status['service']} tunnel (PID: {status['pid']})...")
-            os.kill(status['pid'], signal.SIGTERM)
-            time.sleep(1)
             
-            # Force kill if still running
+            # Try graceful termination first
             try:
-                os.kill(status['pid'], 0)
+                os.kill(status['pid'], signal.SIGTERM)
+                time.sleep(2)  # Give it time to terminate gracefully
+                
+                # Check if process is still running
+                os.kill(status['pid'], 0)  # This will raise ProcessLookupError if process is gone
+                
+                # If still running, force kill
+                print_info("Force killing tunnel process...")
                 os.kill(status['pid'], signal.SIGKILL)
+                time.sleep(1)
             except ProcessLookupError:
+                # Process already terminated
                 pass
             
+            # Clean up PID and URL files
             self.tunnel_pidfile.unlink(missing_ok=True)
             self.tunnel_urlfile.unlink(missing_ok=True)
+            # Also clean up claim file if it exists
+            claim_file = self.tunnel_urlfile.with_name("tunnel_claim.txt")
+            claim_file.unlink(missing_ok=True)
+            
             print_success(f"✅ Tunnel stopped")
         except ProcessLookupError:
             print_warning("Tunnel process already stopped")
+            # Still clean up files
             self.tunnel_pidfile.unlink(missing_ok=True)
             self.tunnel_urlfile.unlink(missing_ok=True)
+            claim_file = self.tunnel_urlfile.with_name("tunnel_claim.txt")
+            claim_file.unlink(missing_ok=True)
         except Exception as e:
             print_error(f"Failed to stop tunnel: {e}")
+            # Try to clean up files anyway
+            try:
+                self.tunnel_pidfile.unlink(missing_ok=True)
+                self.tunnel_urlfile.unlink(missing_ok=True)
+                claim_file = self.tunnel_urlfile.with_name("tunnel_claim.txt")
+                claim_file.unlink(missing_ok=True)
+            except:
+                pass
         
         input("\nPress Enter to continue...")
     
@@ -261,20 +368,28 @@ class TunnelManager:
                 r"(tcp://[a-z0-9-]+\.playit\.gg:\d+)",
                 r"(tcp://[a-zA-Z0-9.-]+\.playit\.gg:\d+)",
                 r"([a-zA-Z0-9.-]+\.playit\.gg:\d+)",
-                r"(https?://[a-zA-Z0-9.-]+\.playit\.gg:\d+)"
+                r"(https?://[a-zA-Z0-9.-]+\.playit\.gg:\d+)",
+                r"([a-zA-Z0-9.-]+\.joinmc\.link)",
+                r"(https?://[a-zA-Z0-9.-]+\.joinmc\.link)",
+                r"(\d+\.\d+\.\d+\.\d+:\d+)"  # IP:port pattern
             ],
             "ngrok": [
                 r"(tcp://[0-9]+\.tcp\.[a-z0-9]+\.ngrok\.io:\d+)",
-                r"([0-9]+\.tcp\.[a-z0-9]+\.ngrok\.io:\d+)"
+                r"([0-9]+\.tcp\.[a-z0-9]+\.ngrok\.io:\d+)",
+                r"(https?://[0-9]+\.tcp\.[a-z0-9]+\.ngrok\.io:\d+)",
+                r"(tcp://[a-zA-Z0-9.-]+\.ngrok\.io:\d+)",
+                r"([a-zA-Z0-9.-]+\.ngrok\.io:\d+)"
             ],
             "cloudflared": [
                 r"(https://[a-z0-9-]+\.trycloudflare\.com)",
-                r"(https://[a-zA-Z0-9.-]+\.trycloudflare\.com)"
+                r"(https://[a-zA-Z0-9.-]+\.trycloudflare\.com)",
+                r"(https?://[a-zA-Z0-9.-]+\.trycloudflare\.com)"
             ],
             "pinggy": [
                 r"(tcp://[a-z0-9-]+\.tcp\.pinggy\.io:\d+)",
                 r"(tcp://[a-zA-Z0-9.-]+\.tcp\.pinggy\.io:\d+)",
-                r"([a-zA-Z0-9.-]+\.tcp\.pinggy\.io:\d+)"
+                r"([a-zA-Z0-9.-]+\.tcp\.pinggy\.io:\d+)",
+                r"(https?://[a-zA-Z0-9.-]+\.tcp\.pinggy\.io:\d+)"
             ]
         }
         
@@ -286,6 +401,17 @@ class TunnelManager:
                 with open(self.tunnel_logfile, 'a') as f:
                     f.write(line)
                 
+                # Special handling for playit.gg claim URLs
+                if service_name == "playit.gg" and "claim" in line.lower():
+                    # Extract claim URL for playit.gg
+                    claim_match = re.search(r"https?://[a-zA-Z0-9.-]+\.playit\.gg/claim/[a-zA-Z0-9-]+", line)
+                    if claim_match:
+                        claim_url = claim_match.group(0)
+                        # Save claim URL to a special file or log it
+                        claim_file = self.tunnel_urlfile.with_name("tunnel_claim.txt")
+                        claim_file.write_text(claim_url)
+                        log(f"{service_name} claim URL: {claim_url}")
+                
                 # Extract URL using enhanced patterns
                 for pattern in patterns:
                     match = re.search(pattern, line)
@@ -293,15 +419,19 @@ class TunnelManager:
                         url = match.group(1) if match.groups() else match.group(0)
                         # Ensure proper protocol prefix
                         if service_name in ["playit.gg", "ngrok", "pinggy"] and not url.startswith(("tcp://", "https://")):
-                            url = "tcp://" + url
+                            # Check if it's a joinmc.link domain
+                            if ".joinmc.link" in url:
+                                url = "https://" + url
+                            else:
+                                url = "tcp://" + url
                         elif service_name == "cloudflared" and not url.startswith("https://"):
                             url = "https://" + url
                         self.tunnel_urlfile.write_text(url)
                         log(f"{service_name} tunnel URL: {url}")
                         return  # Found a URL, no need to check other patterns or lines
+                        
         except Exception as e:
             log(f"Error monitoring tunnel output: {e}")
-    
     # ===================================================================
     # PLAYIT.GG - WITH BACKGROUND SUPPORT
     # ===================================================================
