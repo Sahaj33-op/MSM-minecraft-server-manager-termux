@@ -882,152 +882,404 @@ class RobustTunnelManager:
             return False
     
     def _install_playit(self) -> bool:
-        """Install playit.gg with multiple fallback methods."""
+        """Install playit.gg using official methods from playit.gg/download/linux."""
         install_attempts = [
-            self._install_playit_package_manager,  # Try APT first (more reliable)
-            self._install_playit_curl,             # Direct binary download
-            self._install_playit_wget              # Wget fallback
+            self._install_playit_official_apt,
+            self._install_playit_direct_binary_v016,
+            self._install_playit_fallback_binary,
+            self._install_playit_manual_wrapper
         ]
         
         for attempt_num, install_method in enumerate(install_attempts, 1):
             try:
                 print_info(f"Installation attempt {attempt_num}/{len(install_attempts)}...")
+                log(f"Trying installation method: {install_method.__name__}")
+                
                 if install_method():
-                    return True
+                    print_success(f"✅ Installation successful using method {attempt_num}")
+                    # Verify installation works
+                    if self._verify_playit_installation():
+                        return True
+                    else:
+                        print_warning("Installation completed but verification failed")
+                        
             except Exception as e:
-                log(f"Playit installation method {attempt_num} failed: {e}")
+                error_msg = f"Installation method {attempt_num} ({install_method.__name__}) failed: {e}"
+                log(error_msg)
+                print_warning(f"Method {attempt_num} failed: {str(e)[:100]}...")
                 
         print_error("All playit installation methods failed")
+        self._show_playit_troubleshooting()
         return False
-    
-    def _install_playit_curl(self) -> bool:
-        """Install playit using curl (primary method)."""
+
+    def _install_playit_official_apt(self) -> bool:
+        """Install playit using the official APT method from playit.gg."""
         try:
-            # Try direct binary download first (more reliable)
-            arch = self._detect_architecture()
-            base_url = "https://github.com/playit-cloud/playit-agent/releases/latest/download"
+            log("Attempting official APT installation")
             
-            binary_name = f"playit-linux_{arch}"
-            download_url = f"{base_url}/{binary_name}"
-            target_path = self.bin_dir / "playit"
-            
-            # Download binary
-            result = subprocess.run([
-                "curl", "-L", "-o", str(target_path), download_url
-            ], capture_output=True, text=True, timeout=120)
-            
-            if result.returncode != 0:
-                raise Exception(f"Download failed: {result.stderr}")
-                
-            # Make executable
-            target_path.chmod(0o755)
-            
-            # Add to PATH if not already there
-            self._add_to_path(str(self.bin_dir))
-            
-            return target_path.exists() and target_path.stat().st_size > 0
-        except Exception as e:
-            log(f"Direct binary download failed: {e}")
-            
-        # Fallback to script installation
-        try:
+            # Official commands from playit.gg/download/linux
             commands = [
-                ["curl", "-SsL", "https://playit.gg/install.sh", "-o", "/tmp/playit_install.sh"],
-                ["chmod", "+x", "/tmp/playit_install.sh"],
-                ["bash", "/tmp/playit_install.sh"]
+                # Add GPG key (updated method)
+                "curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null",
+                # Add repository  
+                'echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list',
+                # Update package lists
+                "sudo apt update",
+                # Install playit
+                "sudo apt install -y playit"
             ]
             
-            for cmd in commands:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            for i, cmd in enumerate(commands, 1):
+                log(f"Executing command {i}/{len(commands)}: {cmd}")
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
+                
                 if result.returncode != 0:
-                    raise Exception(f"Command failed: {' '.join(cmd)}")
+                    log(f"Command failed with exit code {result.returncode}")
+                    log(f"STDOUT: {result.stdout}")
+                    log(f"STDERR: {result.stderr}")
                     
-            return shutil.which("playit") is not None
-        except Exception as e:
-            log(f"Script installation failed: {e}")
-            return False
-    
-    def _install_playit_wget(self) -> bool:
-        """Install playit using wget (fallback method)."""
-        try:
-            arch = self._detect_architecture()
-            base_url = "https://github.com/playit-cloud/playit-agent/releases/latest/download"
+                    # Try alternative without sudo for some environments
+                    if "sudo" in cmd and "not found" in result.stderr.lower():
+                        alt_cmd = cmd.replace("sudo ", "")
+                        log(f"Retrying without sudo: {alt_cmd}")
+                        alt_result = subprocess.run(alt_cmd, shell=True, capture_output=True, text=True, timeout=120)
+                        if alt_result.returncode != 0:
+                            raise Exception(f"Command failed: {cmd}")
+                    else:
+                        raise Exception(f"Command failed: {cmd}")
             
-            binary_name = f"playit-linux_{arch}"
-            download_url = f"{base_url}/{binary_name}"
+            return shutil.which("playit") is not None
+            
+        except Exception as e:
+            log(f"Official APT installation failed: {e}")
+            return False
+
+    def _install_playit_direct_binary_v016(self) -> bool:
+        """Install playit using direct binary download from v0.16.2 release."""
+        try:
+            arch = self._detect_architecture_playit()
+            log(f"Detected architecture for playit: {arch}")
+            
+            # Official binary URLs from playit.gg (v0.16.2)
+            binary_urls = {
+                "amd64": "https://github.com/playit-cloud/playit-agent/releases/download/v0.16.2/playit-linux-amd64",
+                "i686": "https://github.com/playit-cloud/playit-agent/releases/download/v0.16.2/playit-linux-i686", 
+                "arm": "https://github.com/playit-cloud/playit-agent/releases/download/v0.16.2/playit-linux-armv7",
+                "arm64": "https://github.com/playit-cloud/playit-agent/releases/download/v0.16.2/playit-linux-aarch64"
+            }
+            
+            # Try the detected architecture first, then fallbacks
+            arch_priority = [arch, "amd64", "arm64", "arm", "i686"]
+            
             target_path = self.bin_dir / "playit"
             
-            # Download binary
-            result = subprocess.run([
-                "wget", "-O", str(target_path), download_url
-            ], capture_output=True, text=True, timeout=120)
-            
-            if result.returncode != 0:
-                raise Exception(f"Download failed: {result.stderr}")
+            for try_arch in arch_priority:
+                if try_arch not in binary_urls:
+                    continue
+                    
+                download_url = binary_urls[try_arch]
+                log(f"Trying to download {try_arch} binary from: {download_url}")
                 
-            # Make executable
-            target_path.chmod(0o755)
+                try:
+                    # Download using curl with better error handling
+                    result = subprocess.run([
+                        "curl", "-L", "-f", "--connect-timeout", "30", 
+                        "--max-time", "180", "-o", str(target_path), 
+                        "--user-agent", "MSM-TunnelManager/1.2.0",
+                        download_url
+                    ], capture_output=True, text=True, timeout=200)
+                    
+                    if result.returncode == 0:
+                        # Verify download
+                        if target_path.exists() and target_path.stat().st_size > 5000:  # At least 5KB
+                            # Make executable
+                            target_path.chmod(0o755)
+                            self._add_to_path(str(self.bin_dir))
+                            
+                            # Test the binary
+                            test_result = subprocess.run([str(target_path), "--version"], 
+                                                       capture_output=True, timeout=15)
+                            if test_result.returncode == 0:
+                                log(f"Successfully downloaded and verified playit binary ({try_arch})")
+                                return True
+                            else:
+                                log(f"Binary test failed for {try_arch}: {test_result.stderr}")
+                        else:
+                            log(f"Downloaded file is too small or missing for {try_arch}")
+                    else:
+                        log(f"Download failed for {try_arch}: {result.stderr}")
+                        
+                    # Clean up failed download
+                    target_path.unlink(missing_ok=True)
+                    
+                except subprocess.TimeoutExpired:
+                    log(f"Download timeout for {try_arch}")
+                    target_path.unlink(missing_ok=True)
+                except Exception as e:
+                    log(f"Download error for {try_arch}: {e}")
+                    target_path.unlink(missing_ok=True)
             
-            # Add to PATH if not already there
+            return False
+            
+        except Exception as e:
+            log(f"Direct binary installation failed: {e}")
+            return False
+
+    def _install_playit_fallback_binary(self) -> bool:
+        """Fallback installation using wget and latest release API."""
+        try:
+            log("Attempting fallback binary installation")
+            
+            # Try to get latest release info
+            latest_url = "https://api.github.com/repos/playit-cloud/playit-agent/releases/latest"
+            
+            try:
+                result = subprocess.run([
+                    "curl", "-s", "--connect-timeout", "15", "--max-time", "30", latest_url
+                ], capture_output=True, text=True, timeout=35)
+                
+                if result.returncode == 0:
+                    import json
+                    release_data = json.loads(result.stdout)
+                    assets = release_data.get("assets", [])
+                    
+                    # Find Linux binary for our architecture
+                    arch = self._detect_architecture_playit()
+                    arch_patterns = {
+                        "amd64": ["amd64", "x86_64"],
+                        "arm64": ["aarch64", "arm64"],
+                        "arm": ["armv7", "arm"],
+                        "i686": ["i686", "386"]
+                    }
+                    
+                    patterns = arch_patterns.get(arch, ["amd64"])
+                    
+                    for asset in assets:
+                        asset_name = asset.get("name", "").lower()
+                        if "linux" in asset_name and any(p in asset_name for p in patterns):
+                            download_url = asset.get("browser_download_url")
+                            if download_url:
+                                log(f"Found latest release asset: {asset_name}")
+                                return self._download_and_install_binary(download_url)
+                                
+            except Exception as e:
+                log(f"Failed to get latest release info: {e}")
+            
+            # Fallback to direct URLs
+            arch = self._detect_architecture_playit()
+            fallback_urls = [
+                f"https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-{arch}",
+                "https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64"
+            ]
+            
+            for url in fallback_urls:
+                if self._download_and_install_binary(url):
+                    return True
+                    
+            return False
+            
+        except Exception as e:
+            log(f"Fallback binary installation failed: {e}")
+            return False
+
+    def _install_playit_manual_wrapper(self) -> bool:
+        """Create a wrapper script that downloads playit on first run."""
+        try:
+            log("Creating manual wrapper script")
+            
+            wrapper_script = self.bin_dir / "playit"
+            wrapper_content = '''#!/bin/bash
+# Playit.gg Auto-Installer Wrapper Script
+# Downloads and runs playit.gg binary automatically
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLAYIT_BINARY="$SCRIPT_DIR/playit-binary"
+
+download_playit() {
+    echo "🔄 Downloading playit.gg binary..."
+    
+    # Detect architecture
+    ARCH=$(uname -m)
+    case $ARCH in
+        x86_64) PLAYIT_ARCH="amd64" ;;
+        aarch64) PLAYIT_ARCH="aarch64" ;;
+        armv7l) PLAYIT_ARCH="armv7" ;;
+        i686|i386) PLAYIT_ARCH="i686" ;;
+        *) PLAYIT_ARCH="amd64" ;;
+    esac
+    
+    # Official download URL (v0.16.2)
+    URL="https://github.com/playit-cloud/playit-agent/releases/download/v0.16.2/playit-linux-$PLAYIT_ARCH"
+    
+    echo "📥 Downloading from: $URL"
+    
+    if command -v curl >/dev/null 2>&1; then
+        curl -L -f --connect-timeout 30 --max-time 180 "$URL" -o "$PLAYIT_BINARY"
+    elif command -v wget >/dev/null 2>&1; then
+        wget --timeout=180 --connect-timeout=30 "$URL" -O "$PLAYIT_BINARY"
+    else
+        echo "❌ Error: Neither curl nor wget available"
+        exit 1
+    fi
+    
+    if [ ! -f "$PLAYIT_BINARY" ] || [ $(stat -c%s "$PLAYIT_BINARY" 2>/dev/null || echo 0) -lt 5000 ]; then
+        echo "❌ Download failed or file too small"
+        rm -f "$PLAYIT_BINARY"
+        exit 1
+    fi
+    
+    chmod +x "$PLAYIT_BINARY"
+    echo "✅ Download completed successfully!"
+}
+
+# Check if binary exists and is executable
+if [ ! -f "$PLAYIT_BINARY" ] || [ ! -x "$PLAYIT_BINARY" ]; then
+    download_playit
+fi
+
+# Run the binary with all arguments
+exec "$PLAYIT_BINARY" "$@"
+'''
+            
+            with open(wrapper_script, 'w') as f:
+                f.write(wrapper_content)
+            
+            wrapper_script.chmod(0o755)
             self._add_to_path(str(self.bin_dir))
             
-            return target_path.exists() and target_path.stat().st_size > 0
+            log("Wrapper script created successfully")
+            return True
+            
         except Exception as e:
-            log(f"Wget installation failed: {e}")
+            log(f"Manual wrapper creation failed: {e}")
             return False
-    
-    def _install_playit_package_manager(self) -> bool:
-        """Install playit using system package manager (tertiary method)."""
+
+    def _detect_architecture_playit(self) -> str:
+        """Detect architecture specifically for playit.gg downloads."""
+        import platform
+        
+        machine = platform.machine().lower()
+        
+        # Map to playit.gg architecture names
+        arch_map = {
+            "x86_64": "amd64",
+            "amd64": "amd64",
+            "aarch64": "arm64", 
+            "arm64": "arm64",
+            "armv8": "arm64",
+            "armv7l": "arm",
+            "armv7": "arm", 
+            "armv6l": "arm",
+            "i386": "i686",
+            "i686": "i686"
+        }
+        
+        detected = arch_map.get(machine, "amd64")
+        log(f"Architecture detection: {machine} -> {detected}")
+        return detected
+
+    def _download_and_install_binary(self, url: str) -> bool:
+        """Download and install binary from given URL."""
         try:
-            # Try APT first (Debian/Ubuntu) - using the provided method
-            # Add the GPG key
-            cmd1 = "curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null"
-            result = subprocess.run(cmd1, shell=True, capture_output=True, text=True, timeout=60)
+            target_path = self.bin_dir / "playit"
+            log(f"Downloading binary from: {url}")
             
-            if result.returncode != 0:
-                raise Exception(f"Failed to add GPG key: {result.stderr}")
+            # Try curl first, then wget
+            download_commands = [
+                ["curl", "-L", "-f", "--connect-timeout", "30", "--max-time", "180", "-o", str(target_path), url],
+                ["wget", "--timeout=180", "--connect-timeout=30", url, "-O", str(target_path)]
+            ]
             
-            # Add the repository
-            cmd2 = 'echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list'
-            result = subprocess.run(cmd2, shell=True, capture_output=True, text=True, timeout=30)
+            for cmd in download_commands:
+                if not shutil.which(cmd[0]):
+                    continue
+                    
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=200)
+                    
+                    if result.returncode == 0 and target_path.exists():
+                        file_size = target_path.stat().st_size
+                        if file_size > 5000:  # At least 5KB
+                            target_path.chmod(0o755)
+                            self._add_to_path(str(self.bin_dir))
+                            
+                            # Test binary
+                            test_result = subprocess.run([str(target_path), "--version"], 
+                                                       capture_output=True, timeout=15)
+                            if test_result.returncode == 0:
+                                log(f"Successfully installed playit binary ({file_size} bytes)")
+                                return True
+                            else:
+                                log(f"Binary test failed: {test_result.stderr}")
+                        else:
+                            log(f"Downloaded file too small: {file_size} bytes")
+                    else:
+                        log(f"Download failed with {cmd[0]}: {result.stderr}")
+                        
+                except subprocess.TimeoutExpired:
+                    log(f"Download timeout with {cmd[0]}")
+                except Exception as e:
+                    log(f"Download error with {cmd[0]}: {e}")
+                    
+                # Clean up failed download
+                target_path.unlink(missing_ok=True)
             
-            if result.returncode != 0:
-                raise Exception(f"Failed to add repository: {result.stderr}")
-            
-            # Update package lists
-            result = subprocess.run(["sudo", "apt", "update"], capture_output=True, text=True, timeout=60)
-            if result.returncode != 0:
-                raise Exception(f"Failed to update package lists: {result.stderr}")
-            
-            # Install playit
-            result = subprocess.run(["sudo", "apt", "install", "-y", "playit"], capture_output=True, text=True, timeout=120)
-            if result.returncode != 0:
-                raise Exception(f"Failed to install playit: {result.stderr}")
-            
-            return shutil.which("playit") is not None
+            return False
             
         except Exception as e:
-            log(f"APT installation failed: {e}")
+            log(f"Binary download and install failed: {e}")
+            return False
+
+    def _verify_playit_installation(self) -> bool:
+        """Verify that playit is properly installed and working."""
+        try:
+            # Check if playit command is available
+            playit_path = shutil.which("playit")
+            if not playit_path:
+                log("playit command not found in PATH")
+                return False
             
-        # Fallback to other package managers
-        package_managers = [
-            (["pkg", "update"], ["pkg", "install", "-y", "playit"]),
-            (["yum", "update"], ["yum", "install", "-y", "playit"])
-        ]
-        
-        for update_cmd, install_cmd in package_managers:
-            try:
-                # Try to update package lists
-                subprocess.run(update_cmd, capture_output=True, timeout=30, check=True)
-                # Try to install
-                result = subprocess.run(install_cmd, capture_output=True, timeout=120)
-                if result.returncode == 0:
-                    return True
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-                continue
+            log(f"Found playit at: {playit_path}")
+            
+            # Test version command
+            result = subprocess.run([playit_path, "--version"], 
+                                  capture_output=True, text=True, timeout=10)
+            
+            if result.returncode == 0:
+                version_output = result.stdout.strip()
+                log(f"Playit version check successful: {version_output}")
+                return True
+            else:
+                log(f"Playit version check failed: {result.stderr}")
+                return False
                 
-        return False
-    
+        except Exception as e:
+            log(f"Playit verification failed: {e}")
+            return False
+
+    def _show_playit_troubleshooting(self):
+        """Show troubleshooting information for playit.gg installation."""
+        print_warning("\n🛠️  Playit.gg Installation Troubleshooting:")
+        print_info("1. Manual installation commands:")
+        print_info("   # APT method (if you have sudo access):")
+        print_info("   curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null")
+        print_info('   echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list')
+        print_info("   sudo apt update && sudo apt install playit")
+        print_info("")
+        print_info("2. Direct binary download:")
+        print_info("   curl -L https://github.com/playit-cloud/playit-agent/releases/download/v0.16.2/playit-linux-amd64 -o playit")
+        print_info("   chmod +x playit")
+        print_info("   ./playit --version")
+        print_info("")
+        print_info("3. Check system requirements:")
+        print_info("   - Internet connectivity: ping github.com")
+        print_info("   - Available tools: which curl wget")
+        print_info("   - Disk space: df -h")
+        print_info(f"   - Architecture: uname -m")
+        print_info("")
+        print_info("4. Check logs for detailed errors:")
+        print_info(f"   cat {self.tunnel_logfile}")
+
     def _install_ngrok(self) -> bool:
         """Install ngrok with authentication setup."""
         try:
