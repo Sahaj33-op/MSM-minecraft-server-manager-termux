@@ -58,7 +58,7 @@ class TunnelManager:
             elif choice == "2":
                 self.setup_ngrok()
             elif choice == "3":
-                self.setup_cloudflared_quick()
+                self.setup_cloudflared()
             elif choice == "4":
                 self.setup_pinggy()
             elif choice == "5" and status:
@@ -338,4 +338,151 @@ class TunnelManager:
         
         self._start_background_process(command, "pinggy")
     
-    # (Keep ngrok and cloudflared methods the same, just add background support)
+    # ===================================================================
+    # NGROK - WITH BACKGROUND SUPPORT
+    # ===================================================================
+    
+    def setup_ngrok(self):
+        """Setup ngrok - runs in background."""
+        clear_screen()
+        print_header("1.1.0")
+        print(f"{UI.colors.BOLD}Ngrok Setup{UI.colors.RESET}\n")
+        
+        # Check if already installed
+        try:
+            result = subprocess.run(
+                ["ngrok", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                print_success("Ngrok is already installed\n")
+                self._start_ngrok_background()
+                return
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        
+        # Install ngrok
+        print_info("Installing ngrok...")
+        print("\nThis will run:")
+        print(f"  {UI.colors.CYAN}1. Update package lists{UI.colors.RESET}")
+        print(f"  {UI.colors.CYAN}2. Install ngrok{UI.colors.RESET}\n")
+        
+        confirm = input(f"{UI.colors.YELLOW}Proceed? (Y/n): {UI.colors.RESET}").strip().lower()
+        if confirm == "n":
+            return
+        
+        try:
+            print_info("Updating package lists...")
+            subprocess.run(["apt", "update"], check=True, timeout=60)
+            
+            print_info("Installing ngrok...")
+            subprocess.run(["apt", "install", "-y", "ngrok"], check=True, timeout=120)
+            
+            print_success("✅ Ngrok installed!\n")
+            self._start_ngrok_background()
+            
+        except subprocess.CalledProcessError as e:
+            print_error(f"Installation failed: {e}")
+            print_info("\nManual installation:")
+            print("  apt update && apt install ngrok")
+            print("  Or download from https://ngrok.com/download")
+            input("\nPress Enter to continue...")
+        except subprocess.TimeoutExpired:
+            print_error("Installation timed out")
+            input("\nPress Enter to continue...")
+    
+    def _start_ngrok_background(self):
+        """Start ngrok in background and return to menu."""
+        # Get server port
+        from server_manager import ServerManager
+        current_server = ServerManager.get_current_server()
+        
+        if current_server:
+            from config import ConfigManager
+            server_config = ConfigManager.load_server_config(current_server)
+            server_port = server_config.get("port", 25565)
+        else:
+            server_port = 25565
+        
+        print(f"\n{UI.colors.BOLD}Starting Ngrok Tunnel{UI.colors.RESET}\n")
+        print_info(f"Tunneling port {server_port}")
+        print_info("Tunnel will run in background\n")
+        
+        command = ["ngrok", "tcp", str(server_port)]
+        self._start_background_process(command, "ngrok")
+    
+    # ===================================================================
+    # CLOUDFLARED - WITH BACKGROUND SUPPORT
+    # ===================================================================
+    
+    def setup_cloudflared(self):
+        """Setup cloudflared - runs in background."""
+        clear_screen()
+        print_header("1.1.0")
+        print(f"{UI.colors.BOLD}Cloudflared Setup{UI.colors.RESET}\n")
+        
+        # Check if already installed
+        try:
+            result = subprocess.run(
+                ["cloudflared", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                print_success("Cloudflared is already installed\n")
+                self._start_cloudflared_background()
+                return
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        
+        # Install cloudflared
+        print_info("Installing cloudflared...")
+        print("\nThis will run:")
+        print(f"  {UI.colors.CYAN}1. Update package lists{UI.colors.RESET}")
+        print(f"  {UI.colors.CYAN}2. Install cloudflared{UI.colors.RESET}\n")
+        
+        confirm = input(f"{UI.colors.YELLOW}Proceed? (Y/n): {UI.colors.RESET}").strip().lower()
+        if confirm == "n":
+            return
+        
+        try:
+            print_info("Updating package lists...")
+            subprocess.run(["apt", "update"], check=True, timeout=60)
+            
+            print_info("Installing cloudflared...")
+            subprocess.run(["apt", "install", "-y", "cloudflared"], check=True, timeout=120)
+            
+            print_success("✅ Cloudflared installed!\n")
+            self._start_cloudflared_background()
+            
+        except subprocess.CalledProcessError as e:
+            print_error(f"Installation failed: {e}")
+            print_info("\nManual installation:")
+            print("  apt update && apt install cloudflared")
+            input("\nPress Enter to continue...")
+        except subprocess.TimeoutExpired:
+            print_error("Installation timed out")
+            input("\nPress Enter to continue...")
+    
+    def _start_cloudflared_background(self):
+        """Start cloudflared in background and return to menu."""
+        # Get server port
+        from server_manager import ServerManager
+        current_server = ServerManager.get_current_server()
+        
+        if current_server:
+            from config import ConfigManager
+            server_config = ConfigManager.load_server_config(current_server)
+            server_port = server_config.get("port", 25565)
+        else:
+            server_port = 25565
+        
+        print(f"\n{UI.colors.BOLD}Starting Cloudflared Tunnel{UI.colors.RESET}\n")
+        print_info(f"Tunneling port {server_port}")
+        print_info("Tunnel will run in background\n")
+        
+        command = ["cloudflared", "tunnel", "--url", f"tcp://localhost:{server_port}"]
+        self._start_background_process(command, "cloudflared")
