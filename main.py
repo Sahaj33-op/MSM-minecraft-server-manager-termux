@@ -94,15 +94,14 @@ def main_menu(config_mgr, server_mgr, world_mgr, tunnel_mgr, ui):
             ("6", "World Manager (backup/restore)"),
             ("7", "Statistics"),
             ("8", "Tunneling Manager"),
-            ("9", "Environment Manager"),
-            ("10", "Performance Monitor"),
-            ("11", "Create New Server"),
-            ("12", "Switch Server"),
-            ("13", "Self-update"),
+            ("9", "Performance Monitor"),
+            ("10", "Create New Server"),
+            ("11", "Switch Server"),
+            ("12", "Self-update"),
             ("0", "Exit")
         ])
         
-        choice = input(f"\n{ui.colors.YELLOW}Select option (0-13): {ui.colors.RESET}").strip()
+        choice = input(f"\n{ui.colors.YELLOW}Select option (0-12): {ui.colors.RESET}").strip()
         
         if choice == "1":
             server_mgr.start_server_menu()
@@ -121,14 +120,12 @@ def main_menu(config_mgr, server_mgr, world_mgr, tunnel_mgr, ui):
         elif choice == "8":
             tunnel_mgr.tunneling_menu()
         elif choice == "9":
-            EnvironmentManager.environment_menu()
-        elif choice == "10":
             server_mgr.monitor_performance_menu()
-        elif choice == "11":
+        elif choice == "10":
             server_mgr.create_server_menu()
-        elif choice == "12":
+        elif choice == "11":
             server_mgr.switch_server_menu()
-        elif choice == "13":
+        elif choice == "12":
             self_update()
             input("\nPress Enter to continue...")
         elif choice == "0":

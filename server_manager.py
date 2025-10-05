@@ -957,52 +957,55 @@ class ServerManager:
     
     def monitor_performance_menu(self):
         """Monitor server performance (TPS, RAM usage)."""
-        clear_screen()
-        print_header("1.1.0")
-        print(f"\n{UI.colors.BOLD}Performance Monitor{UI.colors.RESET}\n")
-        
-        current_server = self.get_current_server()
-        if not current_server:
-            print_error("No server selected.")
-            input("\nPress Enter to continue...")
-            return
+        while True:
+            clear_screen()
+            print_header("1.1.0")
+            print(f"\n{UI.colors.BOLD}Performance Monitor{UI.colors.RESET}\n")
             
-        session_name = f"msm-{current_server}"
-        
-        if not is_screen_session_running(session_name):
-            print_warning(f"Server '{current_server}' is not running.")
-            input("\nPress Enter to continue...")
-            return
+            current_server = self.get_current_server()
+            if not current_server:
+                print_error("No server selected.")
+                input("\nPress Enter to continue...")
+                return
+                
+            session_name = f"msm-{current_server}"
             
-        print_info(f"Monitoring performance for: {current_server}")
-        print()
-        print("Options:")
-        print(" 1. View current TPS")
-        print(" 2. View memory usage")
-        print(" 3. View online players")
-        print(" 4. Continuous monitoring")
-        print(" 5. Stream console output")
-        print(" 0. Back to main menu")
-        print()
-        
-        choice = input(f"{UI.colors.YELLOW}Select option (0-5): {UI.colors.RESET}").strip()
-        
-        if choice == "1":
-            self._get_tps(current_server, session_name)
-        elif choice == "2":
-            self._get_memory_usage(current_server, session_name)
-        elif choice == "3":
-            self._get_online_players(current_server)
-        elif choice == "4":
-            self._continuous_monitoring(current_server, session_name)
-        elif choice == "5":
-            self._stream_console_output(current_server)
-        elif choice != "0":
-            print_error("Invalid option.")
+            if not is_screen_session_running(session_name):
+                print_warning(f"Server '{current_server}' is not running.")
+                input("\nPress Enter to continue...")
+                return
+                
+            print_info(f"Monitoring performance for: {current_server}")
+            print()
+            print("Options:")
+            print(" 1. View current TPS")
+            print(" 2. View memory usage")
+            print(" 3. View online players")
+            print(" 4. Continuous monitoring")
+            print(" 5. Stream console output")
+            print(" 0. Back to main menu")
+            print()
             
-        if choice != "0":
-            input("\nPress Enter to continue...")
-    
+            choice = input(f"{UI.colors.YELLOW}Select option (0-5): {UI.colors.RESET}").strip()
+            
+            if choice == "1":
+                self._get_tps(current_server, session_name)
+            elif choice == "2":
+                self._get_memory_usage(current_server, session_name)
+            elif choice == "3":
+                self._get_online_players(current_server)
+            elif choice == "4":
+                self._continuous_monitoring(current_server, session_name)
+            elif choice == "5":
+                self._stream_console_output(current_server)
+            elif choice == "0":
+                return
+            else:
+                print_error("Invalid option.")
+                
+            if choice != "0":
+                input("\nPress Enter to continue...")
+
     def _get_tps(self, server_name, session_name):
         """Get current TPS (Ticks Per Second) of the server."""
         print_info("Fetching TPS...")
@@ -1012,8 +1015,7 @@ class ServerManager:
         returncode, _, stderr = run_command(tps_cmd)
         
         if returncode == 0:
-            print_info("TPS command sent. Check server console for output.")
-            print_info("Note: This feature requires server implementation of /tps command.")
+            print_info("TPS command sent. Checking latest log for output...")
         else:
             print_error(f"Failed to send TPS command: {stderr}")
             
@@ -1023,17 +1025,17 @@ class ServerManager:
         
         if log_file.exists():
             try:
-                # Read last 50 lines of log file
+                # Read last 100 lines of log file
                 with open(log_file, "r") as f:
-                    lines = f.readlines()[-50:]
+                    lines = f.readlines()[-100:]
                 
                 # Look for TPS information
-                tps_lines = [line for line in lines if "TPS" in line.upper() and ("CURRENT" in line.upper() or "AVG" in line.upper())]
+                tps_lines = [line for line in lines if "TPS" in line.upper() and ("CURRENT" in line.upper() or "AVG" in line.upper() or "TICK" in line.upper())]
                 
                 if tps_lines:
                     print()
                     print(f"{UI.colors.BOLD}Recent TPS Information:{UI.colors.RESET}")
-                    for line in tps_lines[-5:]:  # Show last 5 TPS lines
+                    for line in tps_lines[-10:]:  # Show last 10 TPS lines
                         print(line.strip())
                 else:
                     print_info("No recent TPS information found in logs.")
@@ -1042,7 +1044,7 @@ class ServerManager:
                 print_error(f"Failed to read log file: {e}")
         else:
             print_info("Log file not found. Server may not have started yet.")
-    
+
     def _get_memory_usage(self, server_name, session_name):
         """Get current memory usage of the server."""
         print_info("Fetching memory usage...")
@@ -1070,7 +1072,7 @@ class ServerManager:
             print_info("psutil not available. Install with: pip install psutil")
         except Exception as e:
             print_error(f"Failed to get memory usage: {e}")
-    
+
     def _get_online_players(self, server_name):
         """Get list of online players from server log."""
         print_info("Fetching online players...")
@@ -1119,7 +1121,7 @@ class ServerManager:
                 
         except Exception as e:
             print_error(f"Failed to read player information: {e}")
-    
+
     def _continuous_monitoring(self, server_name, session_name):
         """Continuous monitoring of server performance."""
         print_info("Starting continuous monitoring...")
@@ -1165,7 +1167,7 @@ class ServerManager:
             print_info("\nMonitoring stopped by user.")
         except Exception as e:
             print_error(f"Monitoring error: {e}")
-    
+
     def _stream_console_output(self, server_name):
         """Stream console output from server log."""
         print_info("Streaming console output...")

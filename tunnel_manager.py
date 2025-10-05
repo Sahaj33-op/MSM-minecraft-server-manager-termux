@@ -61,18 +61,43 @@ class TunnelManager:
         print()
         print_info("=== Playit.gg Setup ===")
         print()
-        print(f"{UI.colors.BOLD}1. Install playit agent:{UI.colors.RESET}")
-        print(f"   {UI.colors.CYAN}curl -fsSL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor -o /etc/apt/trusted.gpg.d/playit.gpg{UI.colors.RESET}")
-        print(f"   {UI.colors.CYAN}echo 'deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./' > /etc/apt/sources.list.d/playit-cloud.list{UI.colors.RESET}")
-        print(f"   {UI.colors.CYAN}apt update && apt install -y playit{UI.colors.RESET}")
+        print(f"{UI.colors.BOLD}Installation:{UI.colors.RESET}")
+        print("Playit.gg can be installed using the following commands:")
+        print(f"   {UI.colors.CYAN}curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null{UI.colors.RESET}")
+        print(f"   {UI.colors.CYAN}echo \"deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./\" | sudo tee /etc/apt/sources.list.d/playit-cloud.list{UI.colors.RESET}")
+        print(f"   {UI.colors.CYAN}sudo apt update && sudo apt install playit{UI.colors.RESET}")
         print()
-        print(f"   {UI.colors.YELLOW}Requires gnupg: apt install gnupg{UI.colors.RESET}")
+        
+        # Try to install playit automatically
+        try:
+            print_info("Attempting automatic installation...")
+            # Create directories if they don't exist
+            subprocess.run(["mkdir", "-p", "/etc/apt/trusted.gpg.d"], check=True)
+            subprocess.run(["mkdir", "-p", "/etc/apt/sources.list.d"], check=True)
+            
+            # Download and add the GPG key using shell commands
+            subprocess.run("curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null", 
+                          shell=True, check=True)
+            
+            # Add repository
+            with open("/etc/apt/sources.list.d/playit-cloud.list", "w") as f:
+                f.write("deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./\n")
+            
+            # Update and install
+            subprocess.run(["apt", "update"], check=True)
+            subprocess.run(["apt", "install", "-y", "playit"], check=True)
+            print_success("Playit.gg installed successfully")
+                
+        except Exception as e:
+            print_error(f"Automatic installation failed: {e}")
+            print_info("Please install manually using the commands above")
+        
         print()
-        print(f"{UI.colors.BOLD}2. Run agent:{UI.colors.RESET} {UI.colors.CYAN}playit{UI.colors.RESET}")
+        print(f"{UI.colors.BOLD}1. Run agent:{UI.colors.RESET} {UI.colors.CYAN}playit{UI.colors.RESET}")
         print()
-        print(f"{UI.colors.BOLD}3. Visit claim URL{UI.colors.RESET} (shown in terminal)")
-        print(f"{UI.colors.BOLD}4. Approve agent{UI.colors.RESET}")
-        print(f"{UI.colors.BOLD}5. Copy secret{UI.colors.RESET} from ~/.config/playit/playit.toml")
+        print(f"{UI.colors.BOLD}2. Visit claim URL{UI.colors.RESET} (shown in terminal)")
+        print(f"{UI.colors.BOLD}3. Approve agent{UI.colors.RESET}")
+        print(f"{UI.colors.BOLD}4. Copy secret{UI.colors.RESET} from ~/.config/playit/playit.toml")
         print()
         
         token_input = input(f"{UI.colors.CYAN}Enter secret key (or skip): {UI.colors.RESET}").strip()
@@ -101,14 +126,25 @@ class TunnelManager:
         except FileNotFoundError:
             print_warning("Ngrok not found. Installing...")
             try:
-                # Try to install ngrok
-                subprocess.run(["apt", "update"], check=True)
-                subprocess.run(["apt", "install", "-y", "ngrok"], check=True)
-                print_success("Ngrok installed successfully")
-            except subprocess.CalledProcessError:
+                # Try to install ngrok via snap first (more common method)
+                try:
+                    subprocess.run(["snap", "install", "ngrok"], check=True)
+                    print_success("Ngrok installed successfully via snap")
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    # Fallback to apt installation
+                    try:
+                        subprocess.run(["apt", "update"], check=True)
+                        subprocess.run(["apt", "install", "-y", "ngrok"], check=True)
+                        print_success("Ngrok installed successfully via apt")
+                    except subprocess.CalledProcessError:
+                        # Final fallback - manual installation instructions
+                        raise Exception("Failed to install ngrok automatically")
+            except Exception:
                 print_error("Failed to install ngrok automatically")
                 print_info("Please install manually:")
-                print(f"   {UI.colors.CYAN}apt update && apt install -y ngrok{UI.colors.RESET}")
+                print(f"   {UI.colors.CYAN}Snap: snap install ngrok{UI.colors.RESET}")
+                print(f"   {UI.colors.CYAN}APT: apt update && apt install -y ngrok{UI.colors.RESET}")
+                print(f"   {UI.colors.CYAN}Or visit: https://ngrok.com/download{UI.colors.RESET}")
                 input("\nPress Enter to continue...")
                 return
         
@@ -155,7 +191,7 @@ class TunnelManager:
             print_info("Starting ngrok tunnel...")
             print_info("Press Ctrl+C to stop")
             try:
-                subprocess.run(["ngrok", "http", str(server_port)])
+                subprocess.run(["ngrok", "tcp", str(server_port)])
             except KeyboardInterrupt:
                 print_info("\nTunnel stopped")
             except Exception as e:
@@ -314,6 +350,11 @@ ingress:
         print(f"{UI.colors.BOLD}2. Sign up or log in{UI.colors.RESET}")
         print(f"{UI.colors.BOLD}3. Get your tunnel token{UI.colors.RESET} from the dashboard")
         print()
+        print(f"{UI.colors.BOLD}SSH Key Setup:{UI.colors.RESET}")
+        print("Pinggy.io requires SSH key authentication. Set up your keys:")
+        print(f"   {UI.colors.CYAN}ssh-keygen -t rsa{UI.colors.RESET} (if you don't have SSH keys)")
+        print(f"   {UI.colors.CYAN}ssh-copy-id token+tcp@free.pinggy.io{UI.colors.RESET} (replace 'token' with your actual token)")
+        print()
         
         # Get user input for token
         token = CredentialsManager.get("pinggy_token")
@@ -339,6 +380,8 @@ ingress:
             print_info("To start your pinggy.io tunnel with token, run:")
             print(f"   {UI.colors.CYAN}ssh -p 443 -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R0:localhost:{server_port} {token}+tcp@free.pinggy.io{UI.colors.RESET}")
             print()
+            print_info("First set up SSH key authentication:")
+            print(f"   {UI.colors.CYAN}ssh-copy-id {token}+tcp@free.pinggy.io{UI.colors.RESET}")
             tunnel_target = f"{token}+tcp@free.pinggy.io"
         else:
             print_info("To start your pinggy.io tunnel without token, run:")
@@ -369,6 +412,7 @@ ingress:
             except Exception as e:
                 print_error(f"Failed to start tunnel: {e}")
                 print_info("Make sure you have SSH access and internet connectivity")
+                print_info("You may need to set up SSH key authentication first")
         
         input("\nPress Enter to continue...")
     

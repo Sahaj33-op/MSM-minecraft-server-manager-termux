@@ -16,6 +16,7 @@ A comprehensive tool for managing Minecraft servers on Termux with Debian (proot
 - Dynamic JAR file detection
 - Server lifecycle management (start, stop, restart)
 - Configuration management
+- **Persistent servers**: Servers continue running even after exiting MSM
 
 ### World Management
 - Automated world backups with ZIP compression
@@ -29,11 +30,13 @@ A comprehensive tool for managing Minecraft servers on Termux with Debian (proot
 - Online player tracking
 - Console output streaming
 - Continuous performance monitoring
+- **In-menu monitoring**: Performance data displayed directly in menu
 
 ### Tunneling Services
 - Playit.gg integration
 - Ngrok integration
 - Cloudflare Tunnel (cloudflared) integration
+- Pinggy.io integration
 - Automatic tunnel setup and management
 
 ### Statistics & Analytics
