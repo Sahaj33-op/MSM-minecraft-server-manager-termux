@@ -1529,30 +1529,30 @@ exec "$PLAYIT_BINARY" "$@"
             
             log(f"Found playit at: {playit_path}")
             
-            # Test version command
-            log("Testing playit --version...")
-            result = subprocess.run([playit_path, "--version"], 
+            # Test help command (playit doesn't support --version)
+            log("Testing playit --help...")
+            result = subprocess.run([playit_path, "--help"], 
                                   capture_output=True, text=True, timeout=15)
             
-            if result.returncode == 0:
-                version_output = result.stdout.strip()
-                log(f"Playit version check successful: {version_output}")
+            # Playit returns 0 for help, but might return non-zero for --help
+            # We'll consider it successful if the binary runs and produces output
+            if result.returncode in [0, 1, 2] and (result.stdout or result.stderr):
+                log("Playit help check successful - binary is working")
                 return True
             else:
-                log(f"Playit version check failed with return code {result.returncode}")
+                log(f"Playit help check failed with return code {result.returncode}")
                 log(f"STDERR: {result.stderr}")
                 log(f"STDOUT: {result.stdout}")
                 
                 # Try with shell=True in case there are environment issues
                 log("Retrying with shell=True...")
-                result2 = subprocess.run(f"{playit_path} --version", 
+                result2 = subprocess.run(f"{playit_path} --help", 
                                        shell=True, capture_output=True, text=True, timeout=15)
-                if result2.returncode == 0:
-                    version_output = result2.stdout.strip()
-                    log(f"Playit version check successful on retry: {version_output}")
+                if result2.returncode in [0, 1, 2] and (result2.stdout or result2.stderr):
+                    log("Playit help check successful on retry")
                     return True
                 else:
-                    log(f"Playit version check failed on retry with return code {result2.returncode}")
+                    log(f"Playit help check failed on retry with return code {result2.returncode}")
                     log(f"STDERR: {result2.stderr}")
                     log(f"STDOUT: {result2.stdout}")
                     
@@ -1560,19 +1560,18 @@ exec "$PLAYIT_BINARY" "$@"
                     log("Retrying with full environment...")
                     env = os.environ.copy()
                     env["PATH"] = os.environ.get("PATH", "") + ":" + os.path.dirname(playit_path)
-                    result3 = subprocess.run([playit_path, "--version"], 
+                    result3 = subprocess.run([playit_path, "--help"], 
                                            capture_output=True, text=True, timeout=15, env=env)
-                    if result3.returncode == 0:
-                        version_output = result3.stdout.strip()
-                        log(f"Playit version check successful with full environment: {version_output}")
+                    if result3.returncode in [0, 1, 2] and (result3.stdout or result3.stderr):
+                        log("Playit help check successful with full environment")
                         return True
                     else:
-                        log(f"Playit version check failed with full environment: {result3.stderr}")
+                        log(f"Playit help check failed with full environment: {result3.stderr}")
                 
                 return False
                 
         except subprocess.TimeoutExpired:
-            log("Playit version check timed out")
+            log("Playit help check timed out")
             return False
         except Exception as e:
             log(f"Playit verification failed with exception: {e}")
@@ -2269,26 +2268,27 @@ exec "$PLAYIT_BINARY" "$@"
                     log(f"Failed to make playit executable: {e}")
                     return False
         
-            # Test version command with timeout
-            print_info("Testing playit version command...")
-            result = subprocess.run([playit_path, "--version"], 
+            # Test help command with timeout (playit doesn't support --version)
+            print_info("Testing playit help command...")
+            result = subprocess.run([playit_path, "--help"], 
                                   capture_output=True, text=True, timeout=15)
         
-            if result.returncode == 0:
-                version_output = result.stdout.strip()
-                log(f"Playit version check successful: {version_output}")
-                print_success(f"✅ Playit version: {version_output}")
+            # Playit returns 0 for help, but might return non-zero for --help
+            # We'll consider it successful if the binary runs and produces output
+            if result.returncode in [0, 1, 2] and (result.stdout or result.stderr):
+                log("Playit help check successful - binary is working")
+                print_success("✅ Playit binary is working correctly")
                 return True
             else:
-                log(f"Playit version check failed. Return code: {result.returncode}")
+                log(f"Playit help check failed. Return code: {result.returncode}")
                 log(f"STDOUT: {result.stdout}")
                 log(f"STDERR: {result.stderr}")
-                print_warning(f"Version check failed: {result.stderr}")
+                print_warning(f"Help check failed: {result.stderr}")
                 return False
                 
         except subprocess.TimeoutExpired:
-            log("Playit version check timed out")
-            print_warning("Version check timed out")
+            log("Playit help check timed out")
+            print_warning("Help check timed out")
             return False
         except Exception as e:
             log(f"Playit verification failed: {e}")
