@@ -1014,3 +1014,206 @@ class ServerManager:
             print_info("\nStopped streaming.")
         except Exception as e:
             print_error(f"Failed to stream console output: {e}")
+
+    def show_connection_info(self):
+        """Show LAN and multiplayer IP addresses for server connection."""
+        clear_screen()
+        print_header("1.1.0")
+        print(f"\n{UI.colors.BOLD}Connection Information{UI.colors.RESET}\n")
+        
+        current_server = self.get_current_server()
+        if not current_server:
+            print_error("No server selected.")
+            input("\nPress Enter to continue...")
+            return
+            
+        # Get server configuration to determine port
+        config = ConfigManager.load_server_config(current_server)
+        server_port = config.get("port", 25565)  # Default Minecraft port
+        
+        # Try to get server properties for the actual port
+        server_path = get_servers_root() / current_server
+        properties_file = server_path / "server.properties"
+        
+        if properties_file.exists():
+            try:
+                with open(properties_file, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            key, value = line.split("=", 1)
+                            if key == "server-port":
+                                server_port = int(value)
+                                break
+            except Exception as e:
+                print_warning(f"Could not read server port from properties: {e}")
+        
+        # Get LAN IP address
+        lan_ip = self._get_lan_ip()
+        
+        # Get public IP address
+        public_ip = self._get_public_ip()
+        
+        print_info(f"Server: {current_server}")
+        print_info(f"Port: {server_port}")
+        print()
+        
+        if lan_ip:
+            print(f"{UI.colors.BOLD}LAN Connection:{UI.colors.RESET}")
+            print(f"  IP: {lan_ip}")
+            print(f"  Port: {server_port}")
+            print(f"  Connection String: {lan_ip}:{server_port}")
+            print()
+        
+        if public_ip and public_ip != lan_ip:
+            print(f"{UI.colors.BOLD}Public Connection:{UI.colors.RESET}")
+            print(f"  IP: {public_ip}")
+            print(f"  Port: {server_port}")
+            print(f"  Connection String: {public_ip}:{server_port}")
+            print()
+            print_warning("Note: For public connection, port forwarding may be required.")
+        elif public_ip:
+            print(f"{UI.colors.BOLD}Connection:{UI.colors.RESET}")
+            print(f"  IP: {public_ip}")
+            print(f"  Port: {server_port}")
+            print(f"  Connection String: {public_ip}:{server_port}")
+            print()
+            print_info("This appears to be a local/public IP. For external connections,")
+            print_info("ensure your router is configured to forward port {server_port}.")
+        else:
+            print_warning("Could not determine public IP address.")
+            
+        # Check for active tunnels
+        self._show_tunnel_info(current_server, server_port)
+        
+        print()
+        input("Press Enter to continue...")
+
+    def _get_lan_ip(self):
+        """Get the local LAN IP address."""
+        import socket
+        try:
+            # Create a socket and connect to a remote address to determine local IP
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # Connecting to a remote address (doesn't actually send data)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            # Fallback method
+            try:
+                hostname = socket.gethostname()
+                return socket.gethostbyname(hostname)
+            except Exception:
+                return None
+
+    def _get_public_ip(self):
+        """Get the public IP address."""
+        try:
+            import urllib.request
+            with urllib.request.urlopen("https://api.ipify.org") as response:
+                return response.read().decode("utf-8").strip()
+        except Exception:
+            return None
+            
+    def _show_tunnel_info(self, server_name, server_port):
+        """Show information about active tunnels."""
+        print(f"\n{UI.colors.BOLD}Tunneling Information:{UI.colors.RESET}")
+        
+        # Check for ngrok tunnels
+        try:
+            # Try to get ngrok tunnel info
+            import subprocess
+            import json
+            result = subprocess.run(["curl", "-s", "http://localhost:4040/api/tunnels"], 
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                try:
+                    data = json.loads(result.stdout)
+                    if "tunnels" in data and data["tunnels"]:
+                        print_info("Ngrok Tunnel Active:")
+                        for tunnel in data["tunnels"]:
+                            if tunnel.get("proto") == "tcp":
+                                # Extract the public URL
+                                public_url = tunnel.get("public_url", "")
+                                if public_url.startswith("tcp://"):
+                                    # Convert tcp:// to a more user-friendly format
+                                    host_port = public_url[6:]  # Remove "tcp://"
+                                    print(f"  Public Address: {host_port}")
+                                    print(f"  Protocol: TCP")
+                        return
+                except json.JSONDecodeError:
+                    pass
+        except Exception:
+            pass
+        
+        # Check for cloudflared tunnels
+        try:
+            # This is a simplified check - in practice, you might need to check
+            # the cloudflared process or config files
+            import subprocess
+            result = subprocess.run(["pgrep", "cloudflared"], 
+                                  capture_output=True, text=True, timeout=3)
+            if result.returncode == 0:
+                print_info("Cloudflared Tunnel Active:")
+                print("  Check Cloudflare dashboard for connection details")
+                return
+        except Exception:
+            pass
+            
+        # Check for playit.gg tunnels
+        try:
+            # Check if playit process is running
+            import subprocess
+            result = subprocess.run(["pgrep", "playit"], 
+                                  capture_output=True, text=True, timeout=3)
+            if result.returncode == 0:
+                print_info("Playit.gg Tunnel Active:")
+                print("  Check playit.gg dashboard for connection details")
+                return
+        except Exception:
+            pass
+            
+        # Check for pinggy.io tunnels
+        try:
+            # Check if pinggy process is running or if there's an SSH connection to pinggy
+            import subprocess
+            import re
+            result = subprocess.run(["ps", "aux"], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                # Look for pinggy-related SSH connections
+                lines = result.stdout.split('\n')
+                for line in lines:
+                    if 'ssh' in line and ('pinggy' in line or 'a.pinggy.io' in line) and str(server_port) in line:
+                        # Try to extract the public address
+                        # Look for patterns like tcp://hostname:port or hostname:port
+                        match = re.search(r'tcp://([^\s]+)', line)
+                        if match:
+                            public_addr = match.group(1)
+                            print_info("Pinggy.io Tunnel Active:")
+                            print(f"  Public Address: {public_addr}")
+                            return
+                        else:
+                            # Look for any hostname:port pattern
+                            match = re.search(r'([a-zA-Z0-9.-]+\.a\.pinggy\.io:\d+)', line)
+                            if match:
+                                public_addr = match.group(1)
+                                print_info("Pinggy.io Tunnel Active:")
+                                print(f"  Public Address: {public_addr}")
+                                return
+                
+                # Check for general pinggy processes
+                result = subprocess.run(["pgrep", "-f", "pinggy"], 
+                                      capture_output=True, text=True, timeout=3)
+                if result.returncode == 0:
+                    print_info("Pinggy.io Tunnel Active:")
+                    print("  Check terminal output for connection details")
+                    return
+        except Exception:
+            pass
+            
+        # If no active tunnels found
+        print_info("No active tunnels detected.")
+        print_info("Use the Tunneling Manager (option 8) to set up tunnels for")
+        print_info("external multiplayer access.")

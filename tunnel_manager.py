@@ -29,9 +29,10 @@ class TunnelManager:
         print(" 1. playit.gg (recommended)")
         print(" 2. ngrok")
         print(" 3. cloudflared (Cloudflare Tunnel)")
+        print(" 4. pinggy.io")
         print()
         
-        choice = input("Select service (1-3, or 0): ").strip()
+        choice = input("Select service (1-4, or 0): ").strip()
         
         if choice == "1":
             self.setup_playit()
@@ -39,6 +40,8 @@ class TunnelManager:
             self.setup_ngrok()
         elif choice == "3":
             self.setup_cloudflared()
+        elif choice == "4":
+            self.setup_pinggy()
         elif choice != "0":
             print_error("Invalid option")
             input("\nPress Enter to continue...")
@@ -271,3 +274,132 @@ ingress:
             print_error(f"Failed to create tunnel: {e}")
         
         input("\nPress Enter to continue...")
+    
+    def setup_pinggy(self):
+        """Setup pinggy.io tunnel."""
+        clear_screen()
+        print_header("1.1.0")
+        print(f"\n{UI.colors.BOLD}Pinggy.io Setup{UI.colors.RESET}\n")
+        
+        # Check if SSH is installed
+        try:
+            result = subprocess.run(["ssh", "-V"], capture_output=True, text=True)
+            if result.returncode != 0:
+                raise FileNotFoundError
+            print_success("SSH client found (required for pinggy)")
+        except FileNotFoundError:
+            print_error("SSH client not found. Pinggy.io requires SSH.")
+            print_info("Please install SSH client:")
+            print(f"   {UI.colors.CYAN}apt update && apt install -y openssh-client{UI.colors.RESET}")
+            input("\nPress Enter to continue...")
+            return
+        
+        # Get server port
+        from server_manager import ServerManager
+        current_server = ServerManager.get_current_server()
+        if current_server:
+            from config import ConfigManager
+            server_config = ConfigManager.load_server_config(current_server)
+            server_port = server_config.get("port", 25565)
+        else:
+            server_port = 25565
+            
+        print_info(f"Using server port: {server_port}")
+        
+        # Show pinggy setup instructions
+        print()
+        print_info("=== Pinggy.io Setup ===")
+        print()
+        print(f"{UI.colors.BOLD}1. Visit:{UI.colors.RESET} https://pinggy.io/")
+        print(f"{UI.colors.BOLD}2. Sign up or log in{UI.colors.RESET}")
+        print(f"{UI.colors.BOLD}3. Get your tunnel token{UI.colors.RESET} from the dashboard")
+        print()
+        
+        # Get user input for token
+        token = CredentialsManager.get("pinggy_token")
+        if token:
+            print_success(f"Existing token: {token[:8]}...")
+            confirm = input("Use existing? (Y/n): ").strip().lower()
+            if confirm == 'n':
+                token = input(f"{UI.colors.CYAN}Enter pinggy.io token (or skip): {UI.colors.RESET}").strip()
+                if token:
+                    CredentialsManager.set("pinggy_token", token)
+                    print_success("Token saved")
+                    log("Pinggy token configured")
+        else:
+            token = input(f"{UI.colors.CYAN}Enter pinggy.io token (or skip): {UI.colors.RESET}").strip()
+            if token:
+                CredentialsManager.set("pinggy_token", token)
+                print_success("Token saved")
+                log("Pinggy token configured")
+        
+        # Show how to start tunnel
+        if token:
+            print()
+            print_info("To start your pinggy.io tunnel, run:")
+            print(f"   {UI.colors.CYAN}ssh -p 443 -R0:localhost:{server_port} tcp@{token}.a.pinggy.io{UI.colors.RESET}")
+            print()
+            print_info("Or start it automatically now:")
+            
+            # Offer to start tunnel automatically
+            confirm = input(f"{UI.colors.YELLOW}Start pinggy.io tunnel now? (y/N): {UI.colors.RESET}").strip().lower()
+            if confirm == 'y':
+                print_info("Starting pinggy.io tunnel...")
+                print_info("Press Ctrl+C to stop")
+                try:
+                    # Start the pinggy tunnel
+                    subprocess.run([
+                        "ssh", "-p", "443", 
+                        f"-R0:localhost:{server_port}", 
+                        f"tcp@{token}.a.pinggy.io"
+                    ])
+                except KeyboardInterrupt:
+                    print_info("\nTunnel stopped")
+                except Exception as e:
+                    print_error(f"Failed to start tunnel: {e}")
+                    print_info("Make sure you have the correct token and SSH access")
+        else:
+            print()
+            print_info("To start your pinggy.io tunnel manually, use this command:")
+            print(f"   {UI.colors.CYAN}ssh -p 443 -R0:localhost:{server_port} tcp@a.pinggy.io{UI.colors.RESET}")
+            print()
+            print_warning("Note: Without a token, you'll get a temporary URL that changes each time")
+        
+        input("\nPress Enter to continue...")
+    
+    def start_pinggy_tunnel(self, server_port):
+        """Start a pinggy.io tunnel programmatically."""
+        # Get token from credentials
+        token = CredentialsManager.get("pinggy_token")
+        if not token:
+            print_error("No pinggy.io token found. Please set up pinggy.io first.")
+            return False
+            
+        try:
+            print_info(f"Starting pinggy.io tunnel on port {server_port}...")
+            # Start the pinggy tunnel
+            import subprocess
+            process = subprocess.Popen([
+                "ssh", "-p", "443", 
+                f"-R0:localhost:{server_port}", 
+                f"tcp@{token}.a.pinggy.io"
+            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            
+            # Wait a moment for the tunnel to start
+            import time
+            time.sleep(3)
+            
+            # Check if process is still running
+            if process.poll() is None:
+                print_success("Pinggy.io tunnel started successfully!")
+                print_info("Tunnel process running in background")
+                return True
+            else:
+                # Process ended, check for errors
+                stdout, stderr = process.communicate()
+                print_error(f"Failed to start pinggy.io tunnel: {stderr}")
+                return False
+                
+        except Exception as e:
+            print_error(f"Failed to start pinggy.io tunnel: {e}")
+            return False
