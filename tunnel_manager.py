@@ -853,9 +853,9 @@ class RobustTunnelManager:
     def _install_playit(self) -> bool:
         """Install playit.gg with multiple fallback methods."""
         install_attempts = [
-            self._install_playit_curl,
-            self._install_playit_wget,
-            self._install_playit_package_manager
+            self._install_playit_package_manager,  # Try APT first (more reliable)
+            self._install_playit_curl,             # Direct binary download
+            self._install_playit_wget              # Wget fallback
         ]
         
         for attempt_num, install_method in enumerate(install_attempts, 1):
@@ -947,8 +947,39 @@ class RobustTunnelManager:
     
     def _install_playit_package_manager(self) -> bool:
         """Install playit using system package manager (tertiary method)."""
+        try:
+            # Try APT first (Debian/Ubuntu) - using the provided method
+            # Add the GPG key
+            cmd1 = "curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null"
+            result = subprocess.run(cmd1, shell=True, capture_output=True, text=True, timeout=60)
+            
+            if result.returncode != 0:
+                raise Exception(f"Failed to add GPG key: {result.stderr}")
+            
+            # Add the repository
+            cmd2 = 'echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list'
+            result = subprocess.run(cmd2, shell=True, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode != 0:
+                raise Exception(f"Failed to add repository: {result.stderr}")
+            
+            # Update package lists
+            result = subprocess.run(["sudo", "apt", "update"], capture_output=True, text=True, timeout=60)
+            if result.returncode != 0:
+                raise Exception(f"Failed to update package lists: {result.stderr}")
+            
+            # Install playit
+            result = subprocess.run(["sudo", "apt", "install", "-y", "playit"], capture_output=True, text=True, timeout=120)
+            if result.returncode != 0:
+                raise Exception(f"Failed to install playit: {result.stderr}")
+            
+            return shutil.which("playit") is not None
+            
+        except Exception as e:
+            log(f"APT installation failed: {e}")
+            
+        # Fallback to other package managers
         package_managers = [
-            (["apt", "update"], ["apt", "install", "-y", "playit"]),
             (["pkg", "update"], ["pkg", "install", "-y", "playit"]),
             (["yum", "update"], ["yum", "install", "-y", "playit"])
         ]
