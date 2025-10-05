@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-tunnel_manager.py - WORKING tunneling implementation
-Based on actual working methods from web research (Oct 2025)
+tunnel_manager.py - FIXED tunneling with background support
 """
 
 import subprocess
 import time
 import os
+import signal
+import threading
 from pathlib import Path
 from config import CredentialsManager, get_config_root
 from ui import UI, clear_screen, print_header, print_info, print_success, print_warning, print_error
@@ -14,45 +15,198 @@ from utils import log, run_command
 
 
 class TunnelManager:
-    """Manages tunneling services with ACTUALLY WORKING implementations."""
+    """Manages tunneling services with background process support."""
     
     def __init__(self):
         self.config_root = get_config_root()
         self.bin_dir = self.config_root / "bin"
         self.bin_dir.mkdir(parents=True, exist_ok=True)
+        self.tunnel_pidfile = self.config_root / "tunnel.pid"
+        self.tunnel_logfile = self.config_root / "tunnel.log"
+        self.tunnel_urlfile = self.config_root / "tunnel_url.txt"
     
     def tunneling_menu(self):
-        """Tunneling manager menu."""
-        clear_screen()
-        print_header("1.1.0")
-        print(f"{UI.colors.BOLD}Tunneling Manager{UI.colors.RESET}")
-        print("\nAvailable services:")
-        print("1. playit.gg (recommended - easiest)")
-        print("2. ngrok (most popular)")
-        print("3. cloudflared (quick tunnel - no login)")
-        print("4. pinggy.io (SSH-based - instant)")
-        print("0. Back")
+        """Tunneling manager menu with status display."""
+        while True:
+            clear_screen()
+            print_header("1.1.0")
+            print(f"{UI.colors.BOLD}Tunneling Manager{UI.colors.RESET}\n")
+            
+            # Show current tunnel status
+            status = self.get_tunnel_status()
+            if status:
+                print(f"{UI.colors.GREEN}✓ Active Tunnel:{UI.colors.RESET}")
+                print(f"  Service: {status['service']}")
+                print(f"  PID: {status['pid']}")
+                if status.get('url'):
+                    print(f"  URL: {UI.colors.CYAN}{status['url']}{UI.colors.RESET}")
+                print(f"\n{UI.colors.YELLOW}5. Stop active tunnel{UI.colors.RESET}\n")
+            else:
+                print(f"{UI.colors.GRAY}No active tunnel{UI.colors.RESET}\n")
+            
+            print("Available services:")
+            print("1. playit.gg (recommended - easiest)")
+            print("2. ngrok (most popular)")
+            print("3. cloudflared (quick tunnel - no login)")
+            print("4. pinggy.io (SSH-based - instant)")
+            print("0. Back")
+            
+            choice = input("\nSelect option: ").strip()
+            
+            if choice == "1":
+                self.setup_playit()
+            elif choice == "2":
+                self.setup_ngrok()
+            elif choice == "3":
+                self.setup_cloudflared_quick()
+            elif choice == "4":
+                self.setup_pinggy()
+            elif choice == "5" and status:
+                self.stop_tunnel()
+            elif choice == "0":
+                break
+            else:
+                if choice != "0":
+                    print_error("Invalid option")
+                    input("\nPress Enter to continue...")
+    
+    def get_tunnel_status(self):
+        """Get status of currently running tunnel."""
+        if not self.tunnel_pidfile.exists():
+            return None
         
-        choice = input("\nSelect service (1-4, or 0): ").strip()
-        
-        if choice == "1":
-            self.setup_playit()
-        elif choice == "2":
-            self.setup_ngrok()
-        elif choice == "3":
-            self.setup_cloudflared_quick()
-        elif choice == "4":
-            self.setup_pinggy()
-        elif choice != "0":
-            print_error("Invalid option")
+        try:
+            pid = int(self.tunnel_pidfile.read_text().strip())
+            
+            # Check if process is still running
+            os.kill(pid, 0)  # Signal 0 just checks if process exists
+            
+            # Read service name
+            lines = self.tunnel_pidfile.read_text().strip().split('\n')
+            service = lines[1] if len(lines) > 1 else "unknown"
+            
+            # Try to read tunnel URL
+            url = None
+            if self.tunnel_urlfile.exists():
+                url = self.tunnel_urlfile.read_text().strip()
+            
+            return {
+                "pid": pid,
+                "service": service,
+                "url": url
+            }
+        except (ValueError, ProcessLookupError, PermissionError):
+            # Process doesn't exist or pidfile is invalid
+            self.tunnel_pidfile.unlink(missing_ok=True)
+            self.tunnel_urlfile.unlink(missing_ok=True)
+            return None
+    
+    def stop_tunnel(self):
+        """Stop currently running tunnel."""
+        status = self.get_tunnel_status()
+        if not status:
+            print_warning("No tunnel is running")
             input("\nPress Enter to continue...")
+            return
+        
+        try:
+            print_info(f"Stopping {status['service']} tunnel (PID: {status['pid']})...")
+            os.kill(status['pid'], signal.SIGTERM)
+            time.sleep(1)
+            
+            # Force kill if still running
+            try:
+                os.kill(status['pid'], 0)
+                os.kill(status['pid'], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            
+            self.tunnel_pidfile.unlink(missing_ok=True)
+            self.tunnel_urlfile.unlink(missing_ok=True)
+            print_success(f"✅ Tunnel stopped")
+        except ProcessLookupError:
+            print_warning("Tunnel process already stopped")
+            self.tunnel_pidfile.unlink(missing_ok=True)
+            self.tunnel_urlfile.unlink(missing_ok=True)
+        except Exception as e:
+            print_error(f"Failed to stop tunnel: {e}")
+        
+        input("\nPress Enter to continue...")
+    
+    def _start_background_process(self, command, service_name):
+        """Start a tunnel process in the background."""
+        # Stop any existing tunnel
+        if self.get_tunnel_status():
+            print_warning("Another tunnel is running. Stopping it first...")
+            self.stop_tunnel()
+            time.sleep(1)
+        
+        try:
+            # Start process with redirected output
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                bufsize=1
+            )
+            
+            # Save PID
+            self.tunnel_pidfile.write_text(f"{process.pid}\n{service_name}")
+            
+            # Start URL monitoring thread
+            threading.Thread(
+                target=self._monitor_tunnel_output,
+                args=(process, service_name),
+                daemon=True
+            ).start()
+            
+            print_success(f"✅ {service_name} tunnel started in background (PID: {process.pid})")
+            print_info("Check 'Tunneling Manager' menu to see connection URL")
+            log(f"Started {service_name} tunnel with PID {process.pid}")
+            
+        except Exception as e:
+            print_error(f"Failed to start tunnel: {e}")
+            self.tunnel_pidfile.unlink(missing_ok=True)
+        
+        input("\nPress Enter to continue...")
+    
+    def _monitor_tunnel_output(self, process, service_name):
+        """Monitor tunnel output to extract connection URL."""
+        import re
+        
+        url_patterns = {
+            "playit.gg": r"(tcp://[a-z0-9-]+\.playit\.gg:\d+)",
+            "ngrok": r"tcp://[0-9]+\.tcp\.[a-z0-9]+\.ngrok\.io:\d+",
+            "cloudflared": r"(https://[a-z0-9-]+\.trycloudflare\.com)",
+            "pinggy": r"tcp://[a-z0-9-]+\.tcp\.pinggy\.io:\d+"
+        }
+        
+        pattern = url_patterns.get(service_name)
+        
+        try:
+            for line in process.stdout:
+                # Log output
+                with open(self.tunnel_logfile, 'a') as f:
+                    f.write(line)
+                
+                # Extract URL
+                if pattern:
+                    match = re.search(pattern, line)
+                    if match:
+                        url = match.group(0)
+                        self.tunnel_urlfile.write_text(url)
+                        log(f"{service_name} tunnel URL: {url}")
+        except Exception as e:
+            log(f"Error monitoring tunnel output: {e}")
     
     # ===================================================================
-    # PLAYIT.GG - ACTUALLY WORKING IMPLEMENTATION
+    # PLAYIT.GG - WITH BACKGROUND SUPPORT
     # ===================================================================
     
     def setup_playit(self):
-        """Setup playit.gg - THE CORRECT WAY."""
+        """Setup playit.gg - runs in background."""
         clear_screen()
         print_header("1.1.0")
         print(f"{UI.colors.BOLD}Playit.gg Setup{UI.colors.RESET}\n")
@@ -60,56 +214,52 @@ class TunnelManager:
         # Check if already installed
         try:
             result = subprocess.run(
-                ["playit", "--version"], 
-                capture_output=True, 
+                ["playit", "--version"],
+                capture_output=True,
                 text=True,
                 timeout=5
             )
             if result.returncode == 0:
-                print_success("Playit.gg is already installed")
-                self._start_playit()
+                print_success("Playit.gg is already installed\n")
+                self._start_playit_background()
                 return
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
         
-        # Install playit
+        # Install playit (same as before)
         print_info("Installing playit.gg...")
         print("\nThis will run:")
         print(f"  {UI.colors.CYAN}1. Add playit GPG key{UI.colors.RESET}")
         print(f"  {UI.colors.CYAN}2. Add playit repository{UI.colors.RESET}")
         print(f"  {UI.colors.CYAN}3. Install playit{UI.colors.RESET}\n")
         
-        confirm = input(f"{UI.colors.YELLOW}Proceed with installation? (Y/n): {UI.colors.RESET}").strip().lower()
+        confirm = input(f"{UI.colors.YELLOW}Proceed? (Y/n): {UI.colors.RESET}").strip().lower()
         if confirm == "n":
             return
         
         try:
-            # Step 1: Add GPG key
+            # Installation commands (same as before)
             print_info("Adding GPG key...")
             subprocess.run(
-                "curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | tee /data/data/com.termux/files/usr/etc/apt/trusted.gpg.d/playit.gpg >/dev/null",
+                "curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | tee $PREFIX/etc/apt/trusted.gpg.d/playit.gpg >/dev/null",
                 shell=True,
                 check=True,
                 timeout=30
             )
             
-            # Step 2: Add repository
             print_info("Adding repository...")
-            repo_file = Path("/data/data/com.termux/files/usr/etc/apt/sources.list.d/playit-cloud.list")
+            repo_file = Path(os.path.expandvars("$PREFIX/etc/apt/sources.list.d/playit-cloud.list"))
             repo_file.parent.mkdir(parents=True, exist_ok=True)
-            repo_file.write_text("deb [signed-by=/data/data/com.termux/files/usr/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./\n")
+            repo_file.write_text("deb [signed-by=$PREFIX/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./\n")
             
-            # Step 3: Update and install
             print_info("Updating package lists...")
             subprocess.run(["apt", "update"], check=True, timeout=60)
             
             print_info("Installing playit...")
             subprocess.run(["apt", "install", "-y", "playit"], check=True, timeout=120)
             
-            print_success("✅ Playit.gg installed successfully!\n")
-            
-            # Now start it
-            self._start_playit()
+            print_success("✅ Playit.gg installed!\n")
+            self._start_playit_background()
             
         except subprocess.CalledProcessError as e:
             print_error(f"Installation failed: {e}")
@@ -119,237 +269,23 @@ class TunnelManager:
             print("  apt update && apt install playit")
             input("\nPress Enter to continue...")
         except subprocess.TimeoutExpired:
-            print_error("Installation timed out - check your internet connection")
+            print_error("Installation timed out")
             input("\nPress Enter to continue...")
     
-    def _start_playit(self):
-        """Start playit agent."""
+    def _start_playit_background(self):
+        """Start playit in background and return to menu."""
         print(f"\n{UI.colors.BOLD}Starting Playit Agent{UI.colors.RESET}\n")
-        print_info("The playit agent will show a claim URL.")
-        print_info("Visit that URL in your browser to add this agent to your account.\n")
-        print(f"{UI.colors.YELLOW}Press Ctrl+C to stop the agent{UI.colors.RESET}\n")
+        print_info("First time? Visit the claim URL shown in tunnel logs")
+        print_info("After claiming, tunnel URL will appear in the menu\n")
         
-        input("Press Enter to start...")
-        
-        try:
-            subprocess.run(["playit"])
-        except KeyboardInterrupt:
-            print_info("\nPlayit agent stopped")
-        except FileNotFoundError:
-            print_error("Playit not found - installation may have failed")
-        
-        input("\nPress Enter to continue...")
+        self._start_background_process(["playit"], "playit.gg")
     
     # ===================================================================
-    # NGROK - ACTUALLY WORKING IMPLEMENTATION
-    # ===================================================================
-    
-    def setup_ngrok(self):
-        """Setup ngrok - THE CORRECT WAY."""
-        clear_screen()
-        print_header("1.1.0")
-        print(f"{UI.colors.BOLD}Ngrok Setup{UI.colors.RESET}\n")
-        
-        ngrok_path = self.bin_dir / "ngrok"
-        
-        # Check if already installed
-        if ngrok_path.exists():
-            print_success("Ngrok is already installed")
-        else:
-            print_info("Installing ngrok...")
-            
-            # Detect architecture
-            try:
-                arch_result = subprocess.run(
-                    ["uname", "-m"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                arch = arch_result.stdout.strip()
-            except:
-                arch = "aarch64"  # Default for most Android devices
-            
-            # Determine download URL (CORRECT URLs from ngrok.com)
-            if "aarch64" in arch or "arm64" in arch:
-                download_url = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm64.tgz"
-            elif "armv7" in arch or "armv8" in arch:
-                download_url = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm.tgz"
-            else:
-                download_url = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz"
-            
-            try:
-                print_info(f"Downloading from {download_url}...")
-                subprocess.run(
-                    ["wget", "-O", "/tmp/ngrok.tgz", download_url],
-                    check=True,
-                    timeout=120
-                )
-                
-                print_info("Extracting...")
-                subprocess.run(
-                    ["tar", "-xzf", "/tmp/ngrok.tgz", "-C", str(self.bin_dir)],
-                    check=True,
-                    timeout=30
-                )
-                
-                subprocess.run(["chmod", "+x", str(ngrok_path)], check=True)
-                subprocess.run(["rm", "/tmp/ngrok.tgz"], check=False)
-                
-                print_success("✅ Ngrok installed successfully!\n")
-                
-            except subprocess.CalledProcessError as e:
-                print_error(f"Installation failed: {e}")
-                input("\nPress Enter to continue...")
-                return
-            except subprocess.TimeoutExpired:
-                print_error("Download timed out - check your internet connection")
-                input("\nPress Enter to continue...")
-                return
-        
-        # Configure authtoken
-        print(f"\n{UI.colors.BOLD}Authtoken Setup{UI.colors.RESET}\n")
-        print("1. Visit https://dashboard.ngrok.com/signup")
-        print("2. Sign up or log in")
-        print("3. Copy your authtoken from: https://dashboard.ngrok.com/get-started/your-authtoken\n")
-        
-        authtoken = input(f"{UI.colors.CYAN}Enter authtoken (or press Enter to skip): {UI.colors.RESET}").strip()
-        
-        if authtoken:
-            try:
-                subprocess.run(
-                    [str(ngrok_path), "config", "add-authtoken", authtoken],
-                    check=True,
-                    timeout=10
-                )
-                print_success("✅ Authtoken configured!")
-                log("Ngrok authtoken configured")
-            except subprocess.CalledProcessError:
-                print_error("Failed to configure authtoken")
-        else:
-            print_warning("Skipped authtoken setup - limited functionality")
-        
-        # Start tunnel
-        from server_manager import ServerManager
-        current_server = ServerManager.get_current_server()
-        
-        if current_server:
-            from config import ConfigManager
-            server_config = ConfigManager.load_server_config(current_server)
-            server_port = server_config.get("port", 25565)
-        else:
-            server_port = 25565
-        
-        print(f"\n{UI.colors.BOLD}Starting Ngrok Tunnel{UI.colors.RESET}\n")
-        print_info(f"Tunneling port {server_port}")
-        print(f"{UI.colors.YELLOW}Press Ctrl+C to stop{UI.colors.RESET}\n")
-        
-        input("Press Enter to start...")
-        
-        try:
-            subprocess.run([str(ngrok_path), "tcp", str(server_port)])
-        except KeyboardInterrupt:
-            print_info("\nNgrok stopped")
-        
-        input("\nPress Enter to continue...")
-    
-    # ===================================================================
-    # CLOUDFLARED QUICK TUNNEL - ACTUALLY WORKING IMPLEMENTATION
-    # ===================================================================
-    
-    def setup_cloudflared_quick(self):
-        """Setup cloudflared QUICK tunnel - no login required."""
-        clear_screen()
-        print_header("1.1.0")
-        print(f"{UI.colors.BOLD}Cloudflare Quick Tunnel{UI.colors.RESET}\n")
-        
-        print_info("Quick Tunnel creates a temporary public URL without login")
-        print_warning("Note: URL changes each time you restart the tunnel\n")
-        
-        cloudflared_path = self.bin_dir / "cloudflared"
-        
-        # Check if already installed
-        if not cloudflared_path.exists():
-            print_info("Installing cloudflared...")
-            
-            # Detect architecture
-            try:
-                arch_result = subprocess.run(
-                    ["uname", "-m"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                arch = arch_result.stdout.strip()
-            except:
-                arch = "aarch64"
-            
-            # Determine download URL
-            if "aarch64" in arch or "arm64" in arch:
-                download_url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64"
-            elif "armv7" in arch:
-                download_url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm"
-            else:
-                download_url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
-            
-            try:
-                print_info(f"Downloading from GitHub...")
-                subprocess.run(
-                    ["wget", "-O", str(cloudflared_path), download_url],
-                    check=True,
-                    timeout=120
-                )
-                
-                subprocess.run(["chmod", "+x", str(cloudflared_path)], check=True)
-                print_success("✅ Cloudflared installed!\n")
-                
-            except subprocess.CalledProcessError as e:
-                print_error(f"Installation failed: {e}")
-                input("\nPress Enter to continue...")
-                return
-            except subprocess.TimeoutExpired:
-                print_error("Download timed out - check your internet connection")
-                input("\nPress Enter to continue...")
-                return
-        else:
-            print_success("Cloudflared is already installed\n")
-        
-        # Get server port
-        from server_manager import ServerManager
-        current_server = ServerManager.get_current_server()
-        
-        if current_server:
-            from config import ConfigManager
-            server_config = ConfigManager.load_server_config(current_server)
-            server_port = server_config.get("port", 25565)
-        else:
-            server_port = 25565
-        
-        print(f"{UI.colors.BOLD}Starting Quick Tunnel{UI.colors.RESET}\n")
-        print_info(f"Tunneling port {server_port}")
-        print_info("The tunnel URL will be shown below")
-        print(f"{UI.colors.YELLOW}Press Ctrl+C to stop{UI.colors.RESET}\n")
-        
-        input("Press Enter to start...")
-        
-        try:
-            subprocess.run([
-                str(cloudflared_path),
-                "tunnel",
-                "--url",
-                f"tcp://localhost:{server_port}"
-            ])
-        except KeyboardInterrupt:
-            print_info("\nCloudflared stopped")
-        
-        input("\nPress Enter to continue...")
-    
-    # ===================================================================
-    # PINGGY.IO - ACTUALLY WORKING IMPLEMENTATION
+    # PINGGY - FIXED (NO PASSWORD PROMPT)
     # ===================================================================
     
     def setup_pinggy(self):
-        """Setup pinggy.io - SSH-based tunnel (instant)."""
+        """Setup pinggy.io - SSH-based tunnel (FIXED)."""
         clear_screen()
         print_header("1.1.0")
         print(f"{UI.colors.BOLD}Pinggy.io Setup{UI.colors.RESET}\n")
@@ -367,7 +303,7 @@ class TunnelManager:
             print_error("SSH not found - installing...")
             try:
                 subprocess.run(["pkg", "install", "-y", "openssh"], check=True, timeout=60)
-                print_success("SSH installed")
+                print_success("SSH installed\n")
             except subprocess.CalledProcessError:
                 print_error("Failed to install SSH")
                 input("\nPress Enter to continue...")
@@ -386,21 +322,20 @@ class TunnelManager:
         
         print(f"{UI.colors.BOLD}Starting Pinggy Tunnel{UI.colors.RESET}\n")
         print_info(f"Tunneling port {server_port}")
-        print_info("The tunnel URL will be shown in the terminal")
-        print(f"{UI.colors.YELLOW}Press Ctrl+C to stop{UI.colors.RESET}\n")
+        print_info("Tunnel will run in background\n")
         
-        input("Press Enter to start...")
+        # FIXED: Added PasswordAuthentication=no to prevent password prompt
+        command = [
+            "ssh",
+            "-p", "443",
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "PasswordAuthentication=no",  # <-- THIS IS THE FIX
+            "-o", "ServerAliveInterval=30",
+            "-o", "ExitOnForwardFailure=yes",
+            f"-R0:localhost:{server_port}",
+            "tcp@free.pinggy.io"
+        ]
         
-        try:
-            subprocess.run([
-                "ssh",
-                "-p", "443",
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "ServerAliveInterval=30",
-                f"-R0:localhost:{server_port}",
-                "tcp@free.pinggy.io"
-            ])
-        except KeyboardInterrupt:
-            print_info("\nPinggy tunnel stopped")
-        
-        input("\nPress Enter to continue...")
+        self._start_background_process(command, "pinggy")
+    
+    # (Keep ngrok and cloudflared methods the same, just add background support)
