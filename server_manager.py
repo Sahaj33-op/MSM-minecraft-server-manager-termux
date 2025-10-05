@@ -19,6 +19,10 @@ from api_client import PaperMCAPI, PurpurAPI, FoliaAPI, FabricAPI, QuiltAPI, Van
 class ServerManager:
     """Manages Minecraft servers."""
     
+    def __init__(self):
+        """Initialize ServerManager with NetworkHelper."""
+        self.network_helper = NetworkHelper()
+    
     @staticmethod
     def list_servers() -> List[str]:
         """List all created servers."""
@@ -1223,16 +1227,16 @@ class ServerManager:
             except Exception as e:
                 print_warning(f"Could not read server port from properties: {e}")
         
-        # Get LAN IP address
-        lan_ip = self._get_lan_ip()
-        
-        # Get public IP address
-        public_ip = self._get_public_ip()
+        # Get LAN and public IP addresses using NetworkHelper
+        lan_ip = self.network_helper.get_lan_ip()
+        public_ip = self.network_helper.get_public_ip()
+        nat_type = self.network_helper.detect_nat_type(lan_ip, public_ip)
         
         print_info(f"Server: {current_server}")
         print_info(f"Port: {server_port}")
         print()
         
+        # Show LAN connection info
         if lan_ip:
             print(f"{UI.colors.BOLD}LAN Connection:{UI.colors.RESET}")
             print(f"  IP: {lan_ip}")
@@ -1240,13 +1244,46 @@ class ServerManager:
             print(f"  Connection String: {lan_ip}:{server_port}")
             print()
         
+        # Show public connection info
         if public_ip and public_ip != lan_ip:
             print(f"{UI.colors.BOLD}Public Connection:{UI.colors.RESET}")
             print(f"  IP: {public_ip}")
             print(f"  Port: {server_port}")
             print(f"  Connection String: {public_ip}:{server_port}")
-            print()
-            print_warning("Note: For public connection, port forwarding may be required.")
+            
+            # NAT/CGNAT detection
+            if nat_type == "CGNAT":
+                print()
+                print_warning("⚠️  CGNAT DETECTED")
+                print_warning("Your ISP uses Carrier-Grade NAT. Port forwarding will NOT work.")
+                print_warning("You MUST use a tunneling service (playit.gg, ngrok, etc.).")
+                print_info("Use option 8 (Tunneling Manager) to set up external access.")
+            elif nat_type == "NAT":
+                print()
+                print_info("Behind NAT: Port forwarding required for external access.")
+                # Test port reachability
+                print(f"Testing if port {server_port} is reachable...")
+                if self.network_helper.test_port_open(public_ip, server_port):
+                    print_success("✅ Port is OPEN and reachable!")
+                else:
+                    print_warning("❌ Port is CLOSED or filtered.")
+                    print_info("External players cannot connect.")
+                    print_info("Options:")
+                    print_info("  1. Set up port forwarding on your router")
+                    print_info("  2. Use a tunneling service (option 8)")
+            elif nat_type == "DIRECT":
+                print()
+                print_success("Direct connection: No NAT detected!")
+                # Test port reachability
+                print(f"Testing if port {server_port} is reachable...")
+                if self.network_helper.test_port_open(public_ip, server_port):
+                    print_success("✅ Port is OPEN and reachable!")
+                else:
+                    print_warning("❌ Port is CLOSED or filtered.")
+                    print_info("External players cannot connect.")
+                    print_info("Options:")
+                    print_info("  1. Check your firewall settings")
+                    print_info("  2. Use a tunneling service (option 8)")
         elif public_ip:
             print(f"{UI.colors.BOLD}Connection:{UI.colors.RESET}")
             print(f"  IP: {public_ip}")
@@ -1287,8 +1324,10 @@ class ServerManager:
             except Exception as e:
                 print_warning(f"Could not read server port from properties: {e}")
         
-        # Get LAN IP address
-        lan_ip = self._get_lan_ip()
+        # Get LAN and public IP addresses using NetworkHelper
+        lan_ip = self.network_helper.get_lan_ip()
+        public_ip = self.network_helper.get_public_ip()
+        nat_type = self.network_helper.detect_nat_type(lan_ip, public_ip)
         
         print()
         print(f"{UI.colors.BOLD}Connection Information:{UI.colors.RESET}")
@@ -1302,37 +1341,18 @@ class ServerManager:
         if tunnel_info:
             print(f"  {UI.colors.CYAN}Multiplayer:{UI.colors.RESET} {tunnel_info}")
         else:
-            print(f"  {UI.colors.CYAN}Multiplayer:{UI.colors.RESET} No active tunnel")
-            print(f"    Use Tunneling Manager (option 8) to set up")
+            # If no tunnel, show public IP with NAT warning
+            if public_ip and public_ip != lan_ip:
+                if nat_type == "CGNAT":
+                    print(f"  {UI.colors.CYAN}Multiplayer:{UI.colors.RESET} CGNAT detected - use tunnel!")
+                elif nat_type == "NAT":
+                    print(f"  {UI.colors.CYAN}Multiplayer:{UI.colors.RESET} {public_ip}:{server_port} (NAT)")
+                else:
+                    print(f"  {UI.colors.CYAN}Multiplayer:{UI.colors.RESET} {public_ip}:{server_port}")
+            else:
+                print(f"  {UI.colors.CYAN}Multiplayer:{UI.colors.RESET} No active tunnel")
+                print(f"    Use Tunneling Manager (option 8) to set up")
 
-    def _get_lan_ip(self):
-        """Get the local LAN IP address."""
-        import socket
-        try:
-            # Create a socket and connect to a remote address to determine local IP
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            # Connecting to a remote address (doesn't actually send data)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except Exception:
-            # Fallback method
-            try:
-                hostname = socket.gethostname()
-                return socket.gethostbyname(hostname)
-            except Exception:
-                return None
-
-    def _get_public_ip(self):
-        """Get the public IP address."""
-        try:
-            import urllib.request
-            with urllib.request.urlopen("https://api.ipify.org") as response:
-                return response.read().decode("utf-8").strip()
-        except Exception:
-            return None
-            
     def _get_tunnel_info(self, server_name, server_port):
         """Get tunnel information for multiplayer connections."""
         try:
@@ -1496,3 +1516,115 @@ class ServerManager:
         print_info("external multiplayer access.")
         print_info("For pinggy.io, the connection address will appear in the")
         print_info("terminal output when you start the tunnel.")
+
+    def _get_lan_ip(self):
+        """Get the local LAN IP address."""
+        return self.network_helper.get_lan_ip()
+
+    def _get_public_ip(self):
+        """Get the public IP address."""
+        return self.network_helper.get_public_ip()
+
+class NetworkHelper:
+    """Network utilities with proper error handling and caching."""
+    
+    def __init__(self):
+        self._public_ip_cache = None
+        self._cache_timestamp = 0
+        self._cache_ttl = 300  # 5 minutes
+    
+    def get_lan_ip(self):
+        """Get LAN IP address with fallback."""
+        import socket
+        try:
+            # Method 1: Connect to external IP (doesn't actually send data)
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.settimeout(2)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            pass
+        
+        try:
+            # Method 2: Get hostname's IP
+            hostname = socket.gethostname()
+            return socket.gethostbyname(hostname)
+        except Exception:
+            pass
+        
+        return "127.0.0.1"  # Ultimate fallback
+    
+    def get_public_ip(self):
+        """Get public IP with caching, timeout, and fallbacks."""
+        import time
+        
+        # Return cached IP if valid
+        if self._public_ip_cache and (time.time() - self._cache_timestamp < self._cache_ttl):
+            return self._public_ip_cache
+        
+        # Fetch new IP
+        services = [
+            'https://api.ipify.org',
+            'https://ifconfig.me/ip',
+            'https://icanhazip.com',
+            'https://api.my-ip.io/ip',
+            'https://checkip.amazonaws.com'
+        ]
+        
+        for service in services:
+            try:
+                import urllib.request
+                req = urllib.request.Request(
+                    service,
+                    headers={'User-Agent': 'MSM/1.1.0'}
+                )
+                with urllib.request.urlopen(req, timeout=3) as response:
+                    ip = response.read().decode('utf-8').strip()
+                    if self._is_valid_ip(ip):
+                        self._public_ip_cache = ip
+                        self._cache_timestamp = time.time()
+                        return ip
+            except Exception:
+                continue
+        
+        return None
+    
+    def _is_valid_ip(self, ip):
+        """Validate IPv4 address."""
+        import re
+        pattern = r'^(\d{1,3}\.){3}\d{1,3}$'
+        if not re.match(pattern, ip):
+            return False
+        try:
+            return all(0 <= int(octet) <= 255 for octet in ip.split('.'))
+        except ValueError:
+            return False
+    
+    def detect_nat_type(self, lan_ip, public_ip):
+        """Detect network topology."""
+        if not lan_ip or not public_ip:
+            return "UNKNOWN"
+        
+        # Check if public IP is actually private (CGNAT)
+        if public_ip.startswith(('10.', '172.16.', '192.168.', '100.64.')):
+            return "CGNAT"
+        
+        # Check if behind NAT
+        if lan_ip != public_ip:
+            return "NAT"
+        
+        return "DIRECT"
+    
+    def test_port_open(self, ip, port, timeout=3):
+        """Test if port is reachable."""
+        import socket
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            result = sock.connect_ex((ip, port))
+            sock.close()
+            return result == 0
+        except Exception:
+            return False
