@@ -1177,7 +1177,7 @@ class ServerManager:
             
         # Check for pinggy.io tunnels
         try:
-            # Check if pinggy process is running or if there's an SSH connection to pinggy
+            # Check if there's an SSH connection to pinggy
             import subprocess
             import re
             result = subprocess.run(["ps", "aux"], capture_output=True, text=True, timeout=5)
@@ -1185,30 +1185,21 @@ class ServerManager:
                 # Look for pinggy-related SSH connections
                 lines = result.stdout.split('\n')
                 for line in lines:
-                    if 'ssh' in line and ('pinggy' in line or 'a.pinggy.io' in line) and str(server_port) in line:
-                        # Try to extract the public address
-                        # Look for patterns like tcp://hostname:port or hostname:port
-                        match = re.search(r'tcp://([^\s]+)', line)
-                        if match:
-                            public_addr = match.group(1)
-                            print_info("Pinggy.io Tunnel Active:")
-                            print(f"  Public Address: {public_addr}")
-                            return
-                        else:
-                            # Look for any hostname:port pattern
-                            match = re.search(r'([a-zA-Z0-9.-]+\.a\.pinggy\.io:\d+)', line)
-                            if match:
-                                public_addr = match.group(1)
-                                print_info("Pinggy.io Tunnel Active:")
-                                print(f"  Public Address: {public_addr}")
-                                return
-                
+                    if 'ssh' in line and 'pinggy' in line and str(server_port) in line:
+                        # Try to extract the public address from the output
+                        # Look for patterns in the SSH command output
+                        print_info("Pinggy.io Tunnel Active:")
+                        print("  Run the pinggy command to see connection details")
+                        print("  The connection string will be in the format:")
+                        print("  tcp://randomstring.a.pinggy.link:portnumber")
+                        return
+                        
                 # Check for general pinggy processes
                 result = subprocess.run(["pgrep", "-f", "pinggy"], 
                                       capture_output=True, text=True, timeout=3)
                 if result.returncode == 0:
                     print_info("Pinggy.io Tunnel Active:")
-                    print("  Check terminal output for connection details")
+                    print("  Run the pinggy command to see connection details")
                     return
         except Exception:
             pass

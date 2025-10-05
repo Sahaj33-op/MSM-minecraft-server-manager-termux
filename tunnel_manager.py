@@ -334,55 +334,46 @@ ingress:
                 log("Pinggy token configured")
         
         # Show how to start tunnel
-        if token:
-            print()
-            print_info("To start your pinggy.io tunnel, run:")
-            print(f"   {UI.colors.CYAN}ssh -p 443 -R0:localhost:{server_port} tcp@{token}.a.pinggy.io{UI.colors.RESET}")
-            print()
-            print_info("Or start it automatically now:")
-            
-            # Offer to start tunnel automatically
-            confirm = input(f"{UI.colors.YELLOW}Start pinggy.io tunnel now? (y/N): {UI.colors.RESET}").strip().lower()
-            if confirm == 'y':
-                print_info("Starting pinggy.io tunnel...")
-                print_info("Press Ctrl+C to stop")
-                try:
-                    # Start the pinggy tunnel
-                    subprocess.run([
-                        "ssh", "-p", "443", 
-                        f"-R0:localhost:{server_port}", 
-                        f"tcp@{token}.a.pinggy.io"
-                    ])
-                except KeyboardInterrupt:
-                    print_info("\nTunnel stopped")
-                except Exception as e:
-                    print_error(f"Failed to start tunnel: {e}")
-                    print_info("Make sure you have the correct token and SSH access")
-        else:
-            print()
-            print_info("To start your pinggy.io tunnel manually, use this command:")
-            print(f"   {UI.colors.CYAN}ssh -p 443 -R0:localhost:{server_port} tcp@a.pinggy.io{UI.colors.RESET}")
-            print()
-            print_warning("Note: Without a token, you'll get a temporary URL that changes each time")
+        print()
+        print_info("To start your pinggy.io tunnel, run:")
+        print(f"   {UI.colors.CYAN}ssh -p 443 -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R0:localhost:{server_port} tcp@free.pinggy.io{UI.colors.RESET}")
+        print()
+        print_info("Or start it automatically now:")
+        
+        # Offer to start tunnel automatically
+        confirm = input(f"{UI.colors.YELLOW}Start pinggy.io tunnel now? (y/N): {UI.colors.RESET}").strip().lower()
+        if confirm == 'y':
+            print_info("Starting pinggy.io tunnel...")
+            print_info("Press Ctrl+C to stop")
+            try:
+                # Start the pinggy tunnel with proper options
+                subprocess.run([
+                    "ssh", "-p", "443",
+                    "-o", "StrictHostKeyChecking=no",
+                    "-o", "ServerAliveInterval=30",
+                    f"-R0:localhost:{server_port}", 
+                    "tcp@free.pinggy.io"
+                ])
+            except KeyboardInterrupt:
+                print_info("\nTunnel stopped")
+            except Exception as e:
+                print_error(f"Failed to start tunnel: {e}")
+                print_info("Make sure you have SSH access and internet connectivity")
         
         input("\nPress Enter to continue...")
     
     def start_pinggy_tunnel(self, server_port):
         """Start a pinggy.io tunnel programmatically."""
-        # Get token from credentials
-        token = CredentialsManager.get("pinggy_token")
-        if not token:
-            print_error("No pinggy.io token found. Please set up pinggy.io first.")
-            return False
-            
         try:
             print_info(f"Starting pinggy.io tunnel on port {server_port}...")
-            # Start the pinggy tunnel
+            # Start the pinggy tunnel with proper options
             import subprocess
             process = subprocess.Popen([
-                "ssh", "-p", "443", 
+                "ssh", "-p", "443",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "ServerAliveInterval=30",
                 f"-R0:localhost:{server_port}", 
-                f"tcp@{token}.a.pinggy.io"
+                "tcp@free.pinggy.io"
             ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             
             # Wait a moment for the tunnel to start
