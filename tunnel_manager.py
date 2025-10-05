@@ -244,6 +244,9 @@ class RobustTunnelManager:
                 r"([a-zA-Z0-9.-]+\.playit\.gg:\d+)",
                 r"([a-zA-Z0-9.-]+\.joinmc\.link)",
                 r"(https?://[a-zA-Z0-9.-]+\.playit\.gg:\d+)",
+                r"(https?://[a-zA-Z0-9.-]+\.joinmc\.link:\d+)",
+                r"([a-zA-Z0-9]+\.joinmc\.link:\d+)",
+                r"(tcp://[a-zA-Z0-9]+\.joinmc\.link:\d+)"
             ],
             TunnelService.NGROK: [
                 r"(tcp://[0-9]+\.tcp\.[a-z0-9]+\.ngrok\.io:\d+)",
@@ -478,6 +481,8 @@ class RobustTunnelManager:
                 if not command:
                     return False
                     
+                log(f"Starting tunnel with command: {' '.join(command)}")
+                
                 # Start process with enhanced monitoring
                 process = subprocess.Popen(
                     command,
@@ -486,7 +491,7 @@ class RobustTunnelManager:
                     stdin=subprocess.DEVNULL,
                     text=True,
                     bufsize=1,
-                    preexec_fn=os.setsid  # Create process group
+                    preexec_fn=os.setsid if os.name != 'nt' else None  # Create process group (Unix only)
                 )
                 
                 # Check if we have a current config before accessing attributes
@@ -516,6 +521,16 @@ class RobustTunnelManager:
                     return True
                 else:
                     print_warning("Tunnel startup timeout, retrying...")
+                    log(f"Tunnel startup timeout. Command: {' '.join(command)}")
+                    # Log the last few lines of the tunnel log for debugging
+                    if self.tunnel_logfile.exists():
+                        try:
+                            with open(self.tunnel_logfile, 'r', encoding='utf-8') as f:
+                                lines = f.readlines()
+                                last_lines = lines[-10:] if len(lines) > 10 else lines
+                                log(f"Last tunnel log lines: {last_lines}")
+                        except Exception as e:
+                            log(f"Error reading tunnel log: {e}")
                     self._cleanup_failed_process(process)
                     
             except Exception as e:
@@ -583,8 +598,12 @@ class RobustTunnelManager:
                             time.sleep(0.1)
                             continue
                     
+                    # Log all output for debugging
+                    line = line.strip()
+                    log(f"Tunnel output: {line}")
+                    
                     # Process the line
-                    self._append_to_log(line.strip())
+                    self._append_to_log(line)
                     self._extract_urls_from_line(line, patterns, claim_patterns, current_config)
                     
         except Exception as e:
@@ -675,6 +694,18 @@ class RobustTunnelManager:
             if current_config.url:
                 return True
                 
+            # For playit.gg, also check if process is running and has been running for a while
+            # This is because playit might not always output a URL but still be working
+            if (current_config.service == TunnelService.PLAYIT and 
+                current_config.pid and 
+                self._is_process_running(current_config.pid)):
+                # If process has been running for more than 5 seconds, consider it ready
+                if current_config.metrics and current_config.metrics.start_time:
+                    uptime = datetime.now() - current_config.metrics.start_time
+                    if uptime.total_seconds() > 5:
+                        log("Playit.gg process running, assuming tunnel is ready")
+                        return True
+                        
             # For some services, just having the process running is enough
             if (current_config.service == TunnelService.PINGGY and 
                 current_config.pid and 
@@ -1124,6 +1155,9 @@ class RobustTunnelManager:
         config_dir = self.config_root / "playit_config"
         config_dir.mkdir(exist_ok=True)
         command.extend(["--config", str(config_dir)])
+        
+        # Add flags to make it more verbose for better URL detection
+        command.extend(["--log-level", "info"])
         
         return command
 
