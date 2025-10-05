@@ -40,6 +40,19 @@ class TunnelManager:
                 print(f"  PID: {status['pid']}")
                 if status.get('url'):
                     print(f"  URL: {UI.colors.CYAN}{status['url']}{UI.colors.RESET}")
+                else:
+                    print(f"  URL: {UI.colors.YELLOW}Checking... (see logs for claim URL){UI.colors.RESET}")
+                    # Show last few lines of tunnel log for claim URL
+                    if self.tunnel_logfile.exists():
+                        try:
+                            lines = self.tunnel_logfile.read_text().strip().split('\n')
+                            # Show last 5 lines
+                            for line in lines[-5:]:
+                                if 'claim' in line.lower() or 'http' in line:
+                                    print(f"    {UI.colors.GRAY}{line}{UI.colors.RESET}")
+                                    break
+                        except Exception:
+                            pass
                 print(f"\n{UI.colors.YELLOW}5. Stop active tunnel{UI.colors.RESET}\n")
             else:
                 print(f"{UI.colors.GRAY}No active tunnel{UI.colors.RESET}\n")
@@ -49,6 +62,8 @@ class TunnelManager:
             print("2. ngrok (most popular)")
             print("3. cloudflared (quick tunnel - no login)")
             print("4. pinggy.io (SSH-based - instant)")
+            if status:
+                print("5. Stop active tunnel")
             print("0. Back")
             
             choice = input("\nSelect option: ").strip()
@@ -72,34 +87,97 @@ class TunnelManager:
     
     def get_tunnel_status(self):
         """Get status of currently running tunnel."""
-        if not self.tunnel_pidfile.exists():
-            return None
+        # First check if we have a PID file
+        if self.tunnel_pidfile.exists():
+            try:
+                # Read the PID file which contains PID on first line and service on second line
+                lines = self.tunnel_pidfile.read_text().strip().split('\n')
+                if len(lines) >= 2:
+                    pid = int(lines[0].strip())
+                    service = lines[1].strip()
+                    
+                    # Check if process is still running
+                    os.kill(pid, 0)  # Signal 0 just checks if process exists
+                    
+                    # Try to read tunnel URL
+                    url = None
+                    if self.tunnel_urlfile.exists():
+                        url_content = self.tunnel_urlfile.read_text().strip()
+                        if url_content:
+                            url = url_content
+                    
+                    return {
+                        "pid": pid,
+                        "service": service,
+                        "url": url
+                    }
+                else:
+                    # Invalid PID file format, remove it
+                    self.tunnel_pidfile.unlink(missing_ok=True)
+            except (ValueError, ProcessLookupError, PermissionError, IndexError):
+                # Process doesn't exist or pidfile is invalid
+                self.tunnel_pidfile.unlink(missing_ok=True)
+                self.tunnel_urlfile.unlink(missing_ok=True)
         
+        # If no PID file or invalid, try to detect running tunnel processes
         try:
-            pid = int(self.tunnel_pidfile.read_text().strip())
+            # Check for playit process
+            result = subprocess.run(["pgrep", "playit"], capture_output=True, text=True, timeout=3)
+            if result.returncode == 0:
+                # Get the first PID
+                pids = result.stdout.strip().split('\n')
+                if pids:
+                    pid = int(pids[0])
+                    return {
+                        "pid": pid,
+                        "service": "playit.gg",
+                        "url": None
+                    }
+                
+            # Check for ngrok process
+            result = subprocess.run(["pgrep", "ngrok"], capture_output=True, text=True, timeout=3)
+            if result.returncode == 0:
+                # Get the first PID
+                pids = result.stdout.strip().split('\n')
+                if pids:
+                    pid = int(pids[0])
+                    return {
+                        "pid": pid,
+                        "service": "ngrok",
+                        "url": None
+                    }
+                
+            # Check for cloudflared process
+            result = subprocess.run(["pgrep", "cloudflared"], capture_output=True, text=True, timeout=3)
+            if result.returncode == 0:
+                # Get the first PID
+                pids = result.stdout.strip().split('\n')
+                if pids:
+                    pid = int(pids[0])
+                    return {
+                        "pid": pid,
+                        "service": "cloudflared",
+                        "url": None
+                    }
+                
+            # Check for pinggy SSH process
+            result = subprocess.run(["pgrep", "-f", "ssh.*tcp@free.pinggy.io"], capture_output=True, text=True, timeout=3)
+            if result.returncode == 0:
+                # Get the first PID
+                pids = result.stdout.strip().split('\n')
+                if pids:
+                    pid = int(pids[0])
+                    return {
+                        "pid": pid,
+                        "service": "pinggy",
+                        "url": None
+                    }
+        except Exception as e:
+            # Log the error but don't fail
+            log(f"Error detecting tunnel processes: {e}")
+            pass
             
-            # Check if process is still running
-            os.kill(pid, 0)  # Signal 0 just checks if process exists
-            
-            # Read service name
-            lines = self.tunnel_pidfile.read_text().strip().split('\n')
-            service = lines[1] if len(lines) > 1 else "unknown"
-            
-            # Try to read tunnel URL
-            url = None
-            if self.tunnel_urlfile.exists():
-                url = self.tunnel_urlfile.read_text().strip()
-            
-            return {
-                "pid": pid,
-                "service": service,
-                "url": url
-            }
-        except (ValueError, ProcessLookupError, PermissionError):
-            # Process doesn't exist or pidfile is invalid
-            self.tunnel_pidfile.unlink(missing_ok=True)
-            self.tunnel_urlfile.unlink(missing_ok=True)
-            return None
+        return None
     
     def stop_tunnel(self):
         """Stop currently running tunnel."""
@@ -152,8 +230,9 @@ class TunnelManager:
                 bufsize=1
             )
             
-            # Save PID
-            self.tunnel_pidfile.write_text(f"{process.pid}\n{service_name}")
+            # Save PID and service name
+            with open(self.tunnel_pidfile, 'w') as f:
+                f.write(f"{process.pid}\n{service_name}")
             
             # Start URL monitoring thread
             threading.Thread(
@@ -176,14 +255,30 @@ class TunnelManager:
         """Monitor tunnel output to extract connection URL."""
         import re
         
-        url_patterns = {
-            "playit.gg": r"(tcp://[a-z0-9-]+\.playit\.gg:\d+)",
-            "ngrok": r"tcp://[0-9]+\.tcp\.[a-z0-9]+\.ngrok\.io:\d+",
-            "cloudflared": r"(https://[a-z0-9-]+\.trycloudflare\.com)",
-            "pinggy": r"tcp://[a-z0-9-]+\.tcp\.pinggy\.io:\d+"
+        # Enhanced patterns for better URL detection
+        enhanced_patterns = {
+            "playit.gg": [
+                r"(tcp://[a-z0-9-]+\.playit\.gg:\d+)",
+                r"(tcp://[a-zA-Z0-9.-]+\.playit\.gg:\d+)",
+                r"([a-zA-Z0-9.-]+\.playit\.gg:\d+)",
+                r"(https?://[a-zA-Z0-9.-]+\.playit\.gg:\d+)"
+            ],
+            "ngrok": [
+                r"(tcp://[0-9]+\.tcp\.[a-z0-9]+\.ngrok\.io:\d+)",
+                r"([0-9]+\.tcp\.[a-z0-9]+\.ngrok\.io:\d+)"
+            ],
+            "cloudflared": [
+                r"(https://[a-z0-9-]+\.trycloudflare\.com)",
+                r"(https://[a-zA-Z0-9.-]+\.trycloudflare\.com)"
+            ],
+            "pinggy": [
+                r"(tcp://[a-z0-9-]+\.tcp\.pinggy\.io:\d+)",
+                r"(tcp://[a-zA-Z0-9.-]+\.tcp\.pinggy\.io:\d+)",
+                r"([a-zA-Z0-9.-]+\.tcp\.pinggy\.io:\d+)"
+            ]
         }
         
-        pattern = url_patterns.get(service_name)
+        patterns = enhanced_patterns.get(service_name, [])
         
         try:
             for line in process.stdout:
@@ -191,13 +286,19 @@ class TunnelManager:
                 with open(self.tunnel_logfile, 'a') as f:
                     f.write(line)
                 
-                # Extract URL
-                if pattern:
+                # Extract URL using enhanced patterns
+                for pattern in patterns:
                     match = re.search(pattern, line)
                     if match:
-                        url = match.group(0)
+                        url = match.group(1) if match.groups() else match.group(0)
+                        # Ensure proper protocol prefix
+                        if service_name in ["playit.gg", "ngrok", "pinggy"] and not url.startswith(("tcp://", "https://")):
+                            url = "tcp://" + url
+                        elif service_name == "cloudflared" and not url.startswith("https://"):
+                            url = "https://" + url
                         self.tunnel_urlfile.write_text(url)
                         log(f"{service_name} tunnel URL: {url}")
+                        return  # Found a URL, no need to check other patterns or lines
         except Exception as e:
             log(f"Error monitoring tunnel output: {e}")
     
@@ -271,12 +372,20 @@ class TunnelManager:
         except subprocess.TimeoutExpired:
             print_error("Installation timed out")
             input("\nPress Enter to continue...")
+        except Exception as e:
+            print_error(f"Installation error: {e}")
+            input("\nPress Enter to continue...")
     
     def _start_playit_background(self):
         """Start playit in background and return to menu."""
         print(f"\n{UI.colors.BOLD}Starting Playit Agent{UI.colors.RESET}\n")
         print_info("First time? Visit the claim URL shown in tunnel logs")
         print_info("After claiming, tunnel URL will appear in the menu\n")
+        
+        # Create a more detailed startup message
+        print_info("Starting playit.gg agent in background...")
+        print_info("Check the tunneling manager for connection details")
+        print_info("The claim URL will appear in the logs shortly\n")
         
         self._start_background_process(["playit"], "playit.gg")
     
@@ -308,6 +417,10 @@ class TunnelManager:
                 print_error("Failed to install SSH")
                 input("\nPress Enter to continue...")
                 return
+        except Exception as e:
+            print_error(f"Error checking SSH: {e}")
+            input("\nPress Enter to continue...")
+            return
         
         # Get server port
         from server_manager import ServerManager
@@ -363,17 +476,35 @@ class TunnelManager:
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
         
-        # Install ngrok
+        # Install ngrok with proper repository setup
         print_info("Installing ngrok...")
         print("\nThis will run:")
-        print(f"  {UI.colors.CYAN}1. Update package lists{UI.colors.RESET}")
-        print(f"  {UI.colors.CYAN}2. Install ngrok{UI.colors.RESET}\n")
+        print(f"  {UI.colors.CYAN}1. Add ngrok GPG key{UI.colors.RESET}")
+        print(f"  {UI.colors.CYAN}2. Add ngrok repository{UI.colors.RESET}")
+        print(f"  {UI.colors.CYAN}3. Update package lists{UI.colors.RESET}")
+        print(f"  {UI.colors.CYAN}4. Install ngrok{UI.colors.RESET}\n")
         
         confirm = input(f"{UI.colors.YELLOW}Proceed? (Y/n): {UI.colors.RESET}").strip().lower()
         if confirm == "n":
             return
         
         try:
+            print_info("Adding ngrok GPG key...")
+            subprocess.run(
+                "curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc | tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null",
+                shell=True,
+                check=True,
+                timeout=30
+            )
+            
+            print_info("Adding ngrok repository...")
+            subprocess.run(
+                'echo "deb https://ngrok-agent.s3.amazonaws.com bookworm main" | tee /etc/apt/sources.list.d/ngrok.list',
+                shell=True,
+                check=True,
+                timeout=30
+            )
+            
             print_info("Updating package lists...")
             subprocess.run(["apt", "update"], check=True, timeout=60)
             
@@ -386,6 +517,8 @@ class TunnelManager:
         except subprocess.CalledProcessError as e:
             print_error(f"Installation failed: {e}")
             print_info("\nManual installation:")
+            print("  curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc | tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null")
+            print('  echo "deb https://ngrok-agent.s3.amazonaws.com bookworm main" | tee /etc/apt/sources.list.d/ngrok.list')
             print("  apt update && apt install ngrok")
             print("  Or download from https://ngrok.com/download")
             input("\nPress Enter to continue...")
@@ -452,8 +585,30 @@ class TunnelManager:
             print_info("Updating package lists...")
             subprocess.run(["apt", "update"], check=True, timeout=60)
             
-            print_info("Installing cloudflared...")
-            subprocess.run(["apt", "install", "-y", "cloudflared"], check=True, timeout=120)
+            # Try to install from package manager first
+            try:
+                print_info("Installing cloudflared...")
+                subprocess.run(["apt", "install", "-y", "cloudflared"], check=True, timeout=120)
+                print_success("✅ Cloudflared installed!\n")
+                self._start_cloudflared_background()
+                return
+            except subprocess.CalledProcessError:
+                print_warning("Package installation failed, trying manual installation...")
+            
+            # Manual installation for cloudflared
+            print_info("Downloading cloudflared binary...")
+            subprocess.run(
+                "curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb",
+                shell=True,
+                check=True,
+                timeout=120
+            )
+            
+            print_info("Installing cloudflared package...")
+            subprocess.run(["dpkg", "-i", "cloudflared.deb"], check=True, timeout=60)
+            
+            # Clean up
+            subprocess.run(["rm", "-f", "cloudflared.deb"], check=True, timeout=10)
             
             print_success("✅ Cloudflared installed!\n")
             self._start_cloudflared_background()
@@ -461,7 +616,8 @@ class TunnelManager:
         except subprocess.CalledProcessError as e:
             print_error(f"Installation failed: {e}")
             print_info("\nManual installation:")
-            print("  apt update && apt install cloudflared")
+            print("  Download from: https://github.com/cloudflare/cloudflared/releases")
+            print("  Or try: apt update && apt install cloudflared")
             input("\nPress Enter to continue...")
         except subprocess.TimeoutExpired:
             print_error("Installation timed out")

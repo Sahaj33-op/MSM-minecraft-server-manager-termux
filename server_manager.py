@@ -1295,11 +1295,22 @@ class ServerManager:
         else:
             print_warning("Could not determine public IP address.")
             
-        # Check for active tunnels
-        self._show_tunnel_info(current_server, server_port)
-        
-        print()
-        input("Press Enter to continue...")
+        # Check for active tunnels using NetworkHelper
+        tunnel_info = self.network_helper.get_active_tunnel_info()
+        if tunnel_info:
+            print(f"\n{UI.colors.BOLD}Tunneling Information:{UI.colors.RESET}")
+            if tunnel_info['url']:
+                print(f"  Active Tunnel: {tunnel_info['url']}")
+            else:
+                print(f"  Active Tunnel: {tunnel_info['service']} (PID: {tunnel_info['pid']})")
+                print_info("Check tunnel logs for connection URL")
+        else:
+            print(f"\n{UI.colors.BOLD}Tunneling Information:{UI.colors.RESET}")
+            print_info("No active tunnels detected.")
+            print_info("Use the Tunneling Manager (option 8) to set up tunnels for")
+            print_info("external multiplayer access.")
+            print_info("For pinggy.io, the connection address will appear in the")
+            print_info("terminal output when you start the tunnel.")
 
     def show_dashboard_connection_info(self, current_server):
         """Show connection information on the dashboard."""
@@ -1336,10 +1347,13 @@ class ServerManager:
         if lan_ip:
             print(f"  {UI.colors.CYAN}LAN:{UI.colors.RESET} {lan_ip}:{server_port}")
         
-        # Show multiplayer/tunnel info
-        tunnel_info = self._get_tunnel_info(current_server, server_port)
+        # Check for active tunnels first
+        tunnel_info = self.network_helper.get_active_tunnel_info()
         if tunnel_info:
-            print(f"  {UI.colors.CYAN}Multiplayer:{UI.colors.RESET} {tunnel_info}")
+            if tunnel_info['url']:
+                print(f"  {UI.colors.CYAN}Multiplayer:{UI.colors.RESET} {tunnel_info['url']}")
+            else:
+                print(f"  {UI.colors.CYAN}Multiplayer:{UI.colors.RESET} {tunnel_info['service']} tunnel (PID: {tunnel_info['pid']})")
         else:
             # If no tunnel, show public IP with NAT warning
             if public_ip and public_ip != lan_ip:
@@ -1628,3 +1642,34 @@ class NetworkHelper:
             return result == 0
         except Exception:
             return False
+    
+    def get_active_tunnel_info(self):
+        """Get information about active tunnels from tunnel manager."""
+        try:
+            # Try to read tunnel info from tunnel manager files
+            from config import get_config_root
+            config_root = get_config_root()
+            tunnel_pidfile = config_root / "tunnel.pid"
+            tunnel_urlfile = config_root / "tunnel_url.txt"
+            
+            if tunnel_pidfile.exists():
+                lines = tunnel_pidfile.read_text().strip().split('\n')
+                if len(lines) >= 2:
+                    pid = lines[0]
+                    service = lines[1]
+                    
+                    url = None
+                    if tunnel_urlfile.exists():
+                        url_content = tunnel_urlfile.read_text().strip()
+                        if url_content:
+                            url = url_content
+                    
+                    return {
+                        "service": service,
+                        "pid": pid,
+                        "url": url
+                    }
+        except Exception:
+            pass
+        
+        return None
