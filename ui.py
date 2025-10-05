@@ -21,6 +21,7 @@ class Colors:
     CYAN = "\033[36m"
     BOLD = "\033[1m"
     DIM = "\033[2m"
+    GRAY = "\033[90m"
 
 
 class Icons:
