@@ -445,44 +445,104 @@ class RobustTunnelManager:
             input("\nPress Enter to continue...")
     
     def _setup_service_internal(self, service: TunnelService):
-        """Internal service setup with proper error handling."""
+        """Internal service setup with comprehensive error handling and debugging."""
         clear_screen()
         print_header("1.2.0")
         print(f"{UI.colors.BOLD}{service.value} Setup{UI.colors.RESET}\n")
         
-        # Stop existing tunnel if running
-        if self.current_config and self.current_config.state != TunnelState.STOPPED:
-            print_warning("Stopping existing tunnel...")
-            self.stop_tunnel(show_messages=False)
+        try:
+            # Stop existing tunnel if running
+            if self.current_config and self.current_config.state != TunnelState.STOPPED:
+                print_warning("Stopping existing tunnel...")
+                self.stop_tunnel(show_messages=False)
+                time.sleep(2)  # Give it time to stop
             
-        # Check installation
-        if not self._check_service_installed(service):
-            if not self._install_service(service):
-                return
+            # Check installation with detailed logging
+            print_info(f"Checking {service.value} installation...")
+            log(f"Checking installation for {service.value}")
+            
+            if not self._check_service_installed(service):
+                print_info(f"{service.value} not found, installing...")
+                log(f"Installing {service.value}")
                 
-        # Get server port
-        port = self._get_server_port()
-        
-        # Create new configuration
-        self.current_config = TunnelConfig(
-            service=service,
-            port=port,
-            state=TunnelState.STARTING,
-            metrics=TunnelMetrics(start_time=datetime.now())
-        )
-        
-        # Start the tunnel with retry logic
-        success = self._start_tunnel_with_retry()
-        
-        if success:
-            self.health_monitor.start_monitoring()
-            print_success(f"✅ {service.value} tunnel started successfully!")
-            print_info("Monitor status in the tunneling menu")
-        else:
-            print_error(f"Failed to start {service.value} tunnel")
-            self.current_config.state = TunnelState.FAILED
+                # Install with detailed progress
+                if not self._install_service_with_progress(service):
+                    print_error(f"❌ Failed to install {service.value}")
+                    self._show_installation_help(service)
+                    input("\nPress Enter to continue...")
+                    return
+                
+                print_success(f"✅ {service.value} installed successfully!")
+            else:
+                print_success(f"✅ {service.value} is already installed")
             
-        self._save_tunnel_config()
+            # Verify installation works
+            print_info("Verifying installation...")
+            log(f"Verifying {service.value} installation")
+            
+            if not self._verify_service_installation(service):
+                print_error(f"❌ {service.value} installation verification failed")
+                self._show_installation_help(service)
+                input("\nPress Enter to continue...")
+                return
+            
+            print_success(f"✅ {service.value} verification successful")
+            
+            # Get server port
+            port = self._get_server_port()
+            print_info(f"Using server port: {port}")
+            log(f"Server port: {port}")
+            
+            # Create new configuration
+            print_info("Creating tunnel configuration...")
+            self.current_config = TunnelConfig(
+                service=service,
+                port=port,
+                state=TunnelState.STARTING,
+                metrics=TunnelMetrics(start_time=datetime.now())
+            )
+            
+            # Save initial configuration
+            self._save_tunnel_config()
+            log(f"Created tunnel configuration for {service.value} on port {port}")
+            
+            # Start the tunnel with enhanced retry logic
+            print_info(f"Starting {service.value} tunnel...")
+            log(f"Starting tunnel for {service.value}")
+            
+            success = self._start_tunnel_with_detailed_progress()
+            
+            if success:
+                self.health_monitor.start_monitoring()
+                print_success(f"✅ {service.value} tunnel started successfully!")
+                
+                # Show connection information
+                self._show_tunnel_connection_info()
+                
+                print_info("💡 Tip: Use option 8 to view detailed metrics")
+                print_info("💡 Tip: Use option 10 to view tunnel logs")
+                
+            else:
+                print_error(f"❌ Failed to start {service.value} tunnel")
+                self.current_config.state = TunnelState.FAILED
+                
+                # Show troubleshooting information
+                self._show_startup_troubleshooting(service)
+            
+            # Always save final configuration
+            self._save_tunnel_config()
+            
+        except Exception as e:
+            error_msg = f"Setup failed for {service.value}: {e}"
+            log(error_msg)
+            print_error(f"❌ Setup error: {str(e)}")
+            
+            if self.current_config:
+                self.current_config.state = TunnelState.FAILED
+                if self.current_config.metrics:
+                    self.current_config.metrics.last_error = str(e)
+                self._save_tunnel_config()
+        
         input("\nPress Enter to continue...")
     
     def _start_tunnel_with_retry(self) -> bool:
@@ -942,6 +1002,80 @@ class RobustTunnelManager:
         except Exception as e:
             log(f"Installation failed for {service.value}: {e}")
             print_error(f"Installation failed: {e}")
+            return False
+    
+    def _install_service_with_progress(self, service: TunnelService) -> bool:
+        """Install service with detailed progress feedback."""
+        try:
+            print_info("🔄 Starting installation process...")
+            
+            # Get installation methods for this service
+            install_methods = self._get_install_methods(service)
+            
+            for attempt_num, (method_name, install_method) in enumerate(install_methods, 1):
+                try:
+                    print_info(f"📦 Installation attempt {attempt_num}/{len(install_methods)}: {method_name}")
+                    log(f"Trying installation method: {method_name}")
+                    
+                    if install_method():
+                        print_success(f"✅ Installation successful using {method_name}")
+                        return True
+                    else:
+                        print_warning(f"⚠️  Method {attempt_num} ({method_name}) failed")
+                        
+                except Exception as e:
+                    error_msg = f"Method {attempt_num} ({method_name}) failed: {e}"
+                    log(error_msg)
+                    print_warning(f"⚠️  {error_msg}")
+            
+            return False
+            
+        except Exception as e:
+            log(f"Installation process failed: {e}")
+            return False
+    
+    def _get_install_methods(self, service: TunnelService):
+        """Get ordered list of installation methods for a service."""
+        if service == TunnelService.PLAYIT:
+            return [
+                ("Direct Binary Download", self._install_playit_direct_binary_v016),
+                ("APT Repository", self._install_playit_official_apt),
+                ("Fallback Binary", self._install_playit_fallback_binary),
+                ("Manual Wrapper", self._install_playit_manual_wrapper)
+            ]
+        elif service == TunnelService.NGROK:
+            return [
+                ("Direct Download", self._install_ngrok)
+            ]
+        elif service == TunnelService.CLOUDFLARED:
+            return [
+                ("Direct Download", self._install_cloudflared)
+            ]
+        elif service == TunnelService.PINGGY:
+            return [
+                ("SSH Availability", self._install_pinggy)
+            ]
+        
+        return []
+    
+    def _verify_service_installation(self, service: TunnelService) -> bool:
+        """Verify that a service is properly installed and working."""
+        try:
+            print_info("🔍 Running installation verification...")
+            
+            if service == TunnelService.PLAYIT:
+                return self._verify_playit_detailed()
+            elif service == TunnelService.NGROK:
+                return self._verify_ngrok_detailed()
+            elif service == TunnelService.CLOUDFLARED:
+                return self._verify_cloudflared_detailed()
+            elif service == TunnelService.PINGGY:
+                return self._verify_pinggy_detailed()
+            
+            return False
+            
+        except Exception as e:
+            log(f"Service verification failed: {e}")
             return False
     
     def _install_playit(self) -> bool:
@@ -1445,6 +1579,37 @@ exec "$PLAYIT_BINARY" "$@"
             import traceback
             log(f"Traceback: {traceback.format_exc()}")
             return False
+    
+    def _show_installation_help(self, service: TunnelService):
+        """Show installation troubleshooting help for a service."""
+        print_warning(f"\n🛠️  {service.value} Installation Help:")
+        
+        if service == TunnelService.PLAYIT:
+            print_info("1. Manual installation commands:")
+            print_info("   # Direct binary download:")
+            print_info("   curl -L https://github.com/playit-cloud/playit-agent/releases/download/v0.16.2/playit-linux-amd64 -o playit")
+            print_info("   chmod +x playit")
+            print_info("   sudo mv playit /usr/local/bin/")
+            print_info("")
+            print_info("2. APT method (if you have sudo access):")
+            print_info("   curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null")
+            print_info('   echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list')
+            print_info("   sudo apt update && sudo apt install playit")
+        elif service == TunnelService.NGROK:
+            print_info("1. Download from: https://ngrok.com/download")
+            print_info("2. Move to PATH: sudo mv ngrok /usr/local/bin/")
+            print_info("3. Authenticate: ngrok authtoken YOUR_TOKEN")
+        elif service == TunnelService.CLOUDFLARED:
+            print_info("1. Download from: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/")
+            print_info("2. Make executable: chmod +x cloudflared")
+            print_info("3. Move to PATH: sudo mv cloudflared /usr/local/bin/")
+        elif service == TunnelService.PINGGY:
+            print_info("1. SSH should be available by default on most systems")
+            print_info("2. Test with: ssh -V")
+        
+        print_info("")
+        print_info("Check logs for detailed errors:")
+        print_info(f"   cat {self.tunnel_logfile}")
 
     def _show_playit_troubleshooting(self):
         """Show troubleshooting information for playit.gg installation."""
@@ -2068,6 +2233,351 @@ exec "$PLAYIT_BINARY" "$@"
                 
         except Exception as e:
             log(f"Error during cleanup: {e}")
+
+    def _verify_playit_detailed(self) -> bool:
+        """Detailed verification for playit.gg installation."""
+        try:
+            # Check if command exists
+            playit_path = shutil.which("playit")
+            if not playit_path:
+                # Try common locations
+                common_paths = [
+                    str(self.bin_dir / "playit"),
+                    "/usr/local/bin/playit",
+                    "/usr/bin/playit",
+                    str(Path.home() / ".local/bin/playit")
+                ]
+                
+                for path in common_paths:
+                    if Path(path).exists():
+                        playit_path = path
+                        break
+        
+            if not playit_path:
+                log("Playit command not found in PATH or common locations")
+                return False
+        
+            log(f"Found playit at: {playit_path}")
+        
+            # Check if file is executable
+            if not os.access(playit_path, os.X_OK):
+                log(f"Playit binary at {playit_path} is not executable")
+                try:
+                    os.chmod(playit_path, 0o755)
+                    log("Made playit binary executable")
+                except Exception as e:
+                    log(f"Failed to make playit executable: {e}")
+                    return False
+        
+            # Test version command with timeout
+            print_info("Testing playit version command...")
+            result = subprocess.run([playit_path, "--version"], 
+                                  capture_output=True, text=True, timeout=15)
+        
+            if result.returncode == 0:
+                version_output = result.stdout.strip()
+                log(f"Playit version check successful: {version_output}")
+                print_success(f"✅ Playit version: {version_output}")
+                return True
+            else:
+                log(f"Playit version check failed. Return code: {result.returncode}")
+                log(f"STDOUT: {result.stdout}")
+                log(f"STDERR: {result.stderr}")
+                print_warning(f"Version check failed: {result.stderr}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            log("Playit version check timed out")
+            print_warning("Version check timed out")
+            return False
+        except Exception as e:
+            log(f"Playit verification failed: {e}")
+            print_warning(f"Verification error: {e}")
+            return False
+    
+    def _verify_ngrok_detailed(self) -> bool:
+        """Detailed verification for ngrok installation."""
+        try:
+            ngrok_path = shutil.which("ngrok")
+            if not ngrok_path:
+                common_paths = [
+                    str(self.bin_dir / "ngrok"),
+                    "/usr/local/bin/ngrok",
+                    "/usr/bin/ngrok"
+                ]
+                for path in common_paths:
+                    if Path(path).exists():
+                        ngrok_path = path
+                        break
+            
+            if not ngrok_path:
+                return False
+            
+            result = subprocess.run([ngrok_path, "version"], 
+                                  capture_output=True, text=True, timeout=10)
+            
+            if result.returncode == 0:
+                log(f"Ngrok version: {result.stdout.strip()}")
+                return True
+            
+            return False
+        except Exception as e:
+            log(f"Ngrok verification failed: {e}")
+            return False
+    
+    def _verify_cloudflared_detailed(self) -> bool:
+        """Detailed verification for cloudflared installation."""
+        try:
+            cloudflared_path = shutil.which("cloudflared")
+            if not cloudflared_path:
+                common_paths = [
+                    str(self.bin_dir / "cloudflared"),
+                    "/usr/local/bin/cloudflared",
+                    "/usr/bin/cloudflared"
+                ]
+                for path in common_paths:
+                    if Path(path).exists():
+                        cloudflared_path = path
+                        break
+            
+            if not cloudflared_path:
+                return False
+            
+            result = subprocess.run([cloudflared_path, "version"], 
+                                  capture_output=True, text=True, timeout=10)
+            
+            if result.returncode == 0:
+                log(f"Cloudflared version: {result.stdout.strip()}")
+                return True
+            
+            return False
+        except Exception as e:
+            log(f"Cloudflared verification failed: {e}")
+            return False
+    
+    def _verify_pinggy_detailed(self) -> bool:
+        """Detailed verification for pinggy installation."""
+        try:
+            ssh_path = shutil.which("ssh")
+            if not ssh_path:
+                return False
+            
+            result = subprocess.run([ssh_path, "-V"], 
+                                  capture_output=True, text=True, timeout=10)
+            
+            if result.returncode == 0 or result.stderr:
+                log(f"SSH version: {result.stderr.strip()}")
+                return True
+            
+            return False
+        except Exception as e:
+            log(f"Pinggy (SSH) verification failed: {e}")
+            return False
+    
+    def _start_tunnel_with_detailed_progress(self) -> bool:
+        """Start tunnel with detailed progress feedback."""
+        max_attempts = 3
+        
+        for attempt in range(max_attempts):
+            try:
+                if attempt > 0:
+                    delay = min(2 ** attempt, 30)  # Max 30 second delay
+                    print_info(f"🔄 Retry attempt {attempt + 1}/{max_attempts} in {delay}s...")
+                    time.sleep(delay)
+                
+                print_info(f"🚀 Starting tunnel (attempt {attempt + 1}/{max_attempts})...")
+                
+                # Build command
+                command = self._build_tunnel_command()
+                if not command:
+                    print_error("❌ Failed to build tunnel command")
+                    return False
+                
+                log(f"Starting tunnel with command: {' '.join(command)}")
+                
+                # Start process
+                print_info("📡 Launching tunnel process...")
+                process = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                    text=True,
+                    bufsize=1,
+                    preexec_fn=os.setsid if os.name != 'nt' else None
+                )
+                
+                if not self.current_config:
+                    self._cleanup_failed_process(process)
+                    return False
+                
+                self.current_config.pid = process.pid
+                self.current_config.state = TunnelState.STARTING
+                
+                if self.current_config.metrics:
+                    self.current_config.metrics.connection_attempts += 1
+                
+                log(f"Tunnel process started with PID: {process.pid}")
+                print_success(f"✅ Process started (PID: {process.pid})")
+                
+                # Start output monitoring
+                print_info("👁️  Monitoring tunnel output...")
+                monitor_thread = threading.Thread(
+                    target=self._enhanced_output_monitor,
+                    args=(process,),
+                    daemon=True
+                )
+                monitor_thread.start()
+                
+                # Wait for tunnel to be ready with progress updates
+                print_info("⏳ Waiting for tunnel connection...")
+                if self._wait_for_tunnel_ready_with_progress(timeout=60):
+                    self.current_config.state = TunnelState.RUNNING
+                    if self.current_config.metrics:
+                        self.current_config.metrics.successful_connections += 1
+                    
+                    log(f"Tunnel started successfully on attempt {attempt + 1}")
+                    print_success("✅ Tunnel connection established!")
+                    return True
+                else:
+                    print_warning(f"⚠️  Tunnel startup timeout (attempt {attempt + 1})")
+                    self._cleanup_failed_process(process)
+                    
+            except Exception as e:
+                error_msg = f"Tunnel start attempt {attempt + 1} failed: {e}"
+                log(error_msg)
+                print_error(f"❌ {error_msg}")
+                
+                if self.current_config and self.current_config.metrics:
+                    self.current_config.metrics.failed_connections += 1
+                    self.current_config.metrics.last_error = str(e)
+        
+        if self.current_config:
+            self.current_config.state = TunnelState.FAILED
+        return False
+    
+    def _wait_for_tunnel_ready_with_progress(self, timeout: int = 60) -> bool:
+        """Wait for tunnel with progress updates."""
+        start_time = time.time()
+        last_update = start_time
+        
+        while time.time() - start_time < timeout:
+            current_config = self.get_tunnel_config()
+            
+            if not current_config:
+                return False
+            
+            # Show progress every 10 seconds
+            current_time = time.time()
+            if current_time - last_update >= 10:
+                elapsed = int(current_time - start_time)
+                remaining = timeout - elapsed
+                print_info(f"⏳ Still waiting... ({elapsed}s elapsed, {remaining}s remaining)")
+                last_update = current_time
+            
+            # Check if we have a URL
+            if current_config.url:
+                log(f"Tunnel URL detected: {current_config.url}")
+                print_success(f"🌐 Tunnel URL: {current_config.url}")
+                return True
+            
+            # For playit.gg, be more patient and check different conditions
+            if current_config.service == TunnelService.PLAYIT:
+                if current_config.pid and self._is_process_running(current_config.pid) and current_config.metrics and current_config.metrics.start_time:
+                    uptime = datetime.now() - current_config.metrics.start_time
+                    
+                    # Give playit.gg more time and check logs
+                    if uptime.total_seconds() > 15:
+                        if self._check_tunnel_logs_for_success():
+                            print_success("✅ Tunnel appears to be working (check logs for URL)")
+                            return True
+            
+            time.sleep(2)
+        
+        print_error(f"❌ Tunnel startup timeout after {timeout} seconds")
+        return False
+    
+    def _show_tunnel_connection_info(self):
+        """Show detailed tunnel connection information."""
+        if not self.current_config:
+            return
+        
+        print("\n" + "="*60)
+        print(f"🎉 {self.current_config.service.value.upper()} TUNNEL ACTIVE")
+        print("="*60)
+        
+        if self.current_config.url:
+            print(f"🌐 Connection URL: {UI.colors.CYAN}{self.current_config.url}{UI.colors.RESET}")
+            
+            # Show appropriate connection instructions
+            if self.current_config.service == TunnelService.PLAYIT:
+                if "tcp://" in self.current_config.url:
+                    # Extract host and port from tcp://host:port
+                    url_parts = self.current_config.url.replace("tcp://", "").split(":")
+                    if len(url_parts) == 2:
+                        host, port = url_parts
+                        print(f"📝 Minecraft Server Address: {UI.colors.GREEN}{host}:{port}{UI.colors.RESET}")
+                elif "joinmc.link" in self.current_config.url:
+                    print(f"📝 Minecraft Server Address: {UI.colors.GREEN}{self.current_config.url}{UI.colors.RESET}")
+        else:
+            print("⚠️  URL not detected yet - check tunnel logs")
+        
+        if self.current_config.claim_url:
+            print(f"🔗 Claim URL: {UI.colors.YELLOW}{self.current_config.claim_url}{UI.colors.RESET}")
+        
+        print(f"🔌 Local Port: {self.current_config.port}")
+        print(f"🆔 Process ID: {self.current_config.pid}")
+        print("="*60)
+    
+    def _show_startup_troubleshooting(self, service: TunnelService):
+        """Show troubleshooting for tunnel startup failures."""
+        print_warning("\n🛠️  Tunnel Startup Troubleshooting:")
+        print_info("1. Check if your Minecraft server is running:")
+        print_info(f"   netstat -ln | grep {self.current_config.port if self.current_config else 25565}")
+        print_info("2. Check tunnel logs for detailed errors:")
+        print_info(f"   tail -f {self.tunnel_logfile}")
+        print_info("3. Try manual tunnel setup:")
+        
+        if service == TunnelService.PLAYIT:
+            print_info("   playit --help")
+        elif service == TunnelService.NGROK:
+            print_info(f"   ngrok tcp {self.current_config.port if self.current_config else 25565}")
+        
+        print_info("4. Check system resources:")
+        print_info("   free -h && df -h")
+    
+    def _check_tunnel_logs_for_success(self) -> bool:
+        """Check tunnel logs for success indicators."""
+        try:
+            if not self.tunnel_logfile.exists():
+                return False
+            
+            with open(self.tunnel_logfile, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Look for success indicators
+            success_patterns = [
+                "tunnel established",
+                "connection successful",  
+                "ready to accept",
+                "tunnel is active",
+                "tcp://",
+                "joinmc.link",
+                "playit.gg",
+                "tunnel online"
+            ]
+            
+            content_lower = content.lower()
+            for pattern in success_patterns:
+                if pattern in content_lower:
+                    log(f"Found success indicator in logs: {pattern}")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            log(f"Error checking tunnel logs: {e}")
+            return False
 
 # Alias for backward compatibility
 TunnelManager = RobustTunnelManager
