@@ -78,6 +78,9 @@ def main_menu(config_mgr, server_mgr, world_mgr, tunnel_mgr, ui):
         current = server_mgr.get_current_server()
         if current:
             ui.print_success(f"Current Server: {current}")
+            
+            # Show connection information
+            server_mgr.show_dashboard_connection_info(current)
         else:
             ui.print_warning("No server selected")
         
@@ -95,12 +98,11 @@ def main_menu(config_mgr, server_mgr, world_mgr, tunnel_mgr, ui):
             ("10", "Performance Monitor"),
             ("11", "Create New Server"),
             ("12", "Switch Server"),
-            ("13", "Connection Info"),
-            ("14", "Self-update"),
+            ("13", "Self-update"),
             ("0", "Exit")
         ])
         
-        choice = input(f"\n{ui.colors.YELLOW}Select option (0-14): {ui.colors.RESET}").strip()
+        choice = input(f"\n{ui.colors.YELLOW}Select option (0-13): {ui.colors.RESET}").strip()
         
         if choice == "1":
             server_mgr.start_server_menu()
@@ -127,8 +129,6 @@ def main_menu(config_mgr, server_mgr, world_mgr, tunnel_mgr, ui):
         elif choice == "12":
             server_mgr.switch_server_menu()
         elif choice == "13":
-            server_mgr.show_connection_info()
-        elif choice == "14":
             self_update()
             input("\nPress Enter to continue...")
         elif choice == "0":

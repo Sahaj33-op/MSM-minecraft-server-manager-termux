@@ -335,9 +335,18 @@ ingress:
         
         # Show how to start tunnel
         print()
-        print_info("To start your pinggy.io tunnel, run:")
-        print(f"   {UI.colors.CYAN}ssh -p 443 -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R0:localhost:{server_port} tcp@free.pinggy.io{UI.colors.RESET}")
-        print()
+        if token:
+            print_info("To start your pinggy.io tunnel with token, run:")
+            print(f"   {UI.colors.CYAN}ssh -p 443 -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R0:localhost:{server_port} {token}+tcp@free.pinggy.io{UI.colors.RESET}")
+            print()
+            tunnel_target = f"{token}+tcp@free.pinggy.io"
+        else:
+            print_info("To start your pinggy.io tunnel without token, run:")
+            print(f"   {UI.colors.CYAN}ssh -p 443 -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R0:localhost:{server_port} tcp@free.pinggy.io{UI.colors.RESET}")
+            print()
+            print_info("Note: Without a token, you'll get a temporary URL that changes each time")
+            tunnel_target = "tcp@free.pinggy.io"
+        
         print_info("Or start it automatically now:")
         
         # Offer to start tunnel automatically
@@ -351,8 +360,9 @@ ingress:
                     "ssh", "-p", "443",
                     "-o", "StrictHostKeyChecking=no",
                     "-o", "ServerAliveInterval=30",
+                    "-o", "PasswordAuthentication=no",
                     f"-R0:localhost:{server_port}", 
-                    "tcp@free.pinggy.io"
+                    tunnel_target
                 ])
             except KeyboardInterrupt:
                 print_info("\nTunnel stopped")
@@ -364,26 +374,40 @@ ingress:
     
     def start_pinggy_tunnel(self, server_port):
         """Start a pinggy.io tunnel programmatically."""
+        # Get token from credentials
+        token = CredentialsManager.get("pinggy_token")
+        
         try:
             print_info(f"Starting pinggy.io tunnel on port {server_port}...")
             # Start the pinggy tunnel with proper options
             import subprocess
+            import time
+            
+            if token:
+                tunnel_target = f"{token}+tcp@free.pinggy.io"
+                print_info(f"Using token-based authentication: {token[:8]}...")
+            else:
+                tunnel_target = "tcp@free.pinggy.io"
+                print_info("Using anonymous connection (temporary URL)")
+            
+            # Start the pinggy tunnel with proper options
             process = subprocess.Popen([
                 "ssh", "-p", "443",
                 "-o", "StrictHostKeyChecking=no",
                 "-o", "ServerAliveInterval=30",
+                "-o", "PasswordAuthentication=no",
                 f"-R0:localhost:{server_port}", 
-                "tcp@free.pinggy.io"
+                tunnel_target
             ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             
             # Wait a moment for the tunnel to start
-            import time
-            time.sleep(3)
+            time.sleep(5)
             
             # Check if process is still running
             if process.poll() is None:
                 print_success("Pinggy.io tunnel started successfully!")
                 print_info("Tunnel process running in background")
+                print_info("Check terminal output for connection details")
                 return True
             else:
                 # Process ended, check for errors

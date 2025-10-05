@@ -466,7 +466,7 @@ class ServerManager:
             log(f"Unexpected error downloading server for {current_server}: {e}", "ERROR")
     
     def configure_server_menu(self):
-        """Configure server menu."""
+        """Configure server menu with Aternos-like interface."""
         clear_screen()
         print_header("1.1.0")
         print(f"\n{UI.colors.BOLD}Configure Server{UI.colors.RESET}\n")
@@ -503,65 +503,238 @@ class ServerManager:
         print_info(f"Configuring: {current}")
         print()
         
-        # Display current values and allow editing
-        print("Current Configuration:")
-        print("-" * 30)
-        
-        # Common configuration options with descriptions
-        config_options = [
-            ("server-port", "Server port", "25565"),
-            ("motd", "Message of the day", "A Minecraft Server"),
-            ("max-players", "Maximum players", "20"),
-            ("difficulty", "Game difficulty", "easy"),
-            ("gamemode", "Default game mode", "survival"),
-            ("white-list", "Enable whitelist", "false"),
-            ("enable-rcon", "Enable RCON", "false"),
-            ("view-distance", "View distance", "10")
-        ]
-        
-        for i, (key, description, default) in enumerate(config_options, 1):
-            current_value = config.get(key, default)
-            print(f"{i}. {description} ({key}): {current_value}")
-        
-        print()
-        print("0. Back to main menu")
-        print()
-        
-        choice = input(f"{UI.colors.YELLOW}Select option to edit (0-{len(config_options)}): {UI.colors.RESET}").strip()
-        
-        if choice == "0":
-            return
-        
-        try:
-            index = int(choice) - 1
-            if 0 <= index < len(config_options):
-                key, description, default = config_options[index]
-                current_value = config.get(key, default)
-                new_value = input(f"Enter new value for {description} [{current_value}]: ").strip()
+        while True:
+            clear_screen()
+            print_header("1.1.0")
+            print(f"\n{UI.colors.BOLD}Configure Server: {current}{UI.colors.RESET}\n")
+            
+            # Display categorized configuration options like Aternos
+            print(f"{UI.colors.BOLD}Basic Settings:{UI.colors.RESET}")
+            print(f" 1. Server Port          : {config.get('server-port', '25565')}")
+            print(f" 2. Maximum Players      : {config.get('max-players', '20')}")
+            print(f" 3. Message of the Day   : {config.get('motd', 'A Minecraft Server')}")
+            print()
+            
+            print(f"{UI.colors.BOLD}Game Settings:{UI.colors.RESET}")
+            print(f" 4. Game Mode            : {config.get('gamemode', 'survival')}")
+            print(f" 5. Difficulty           : {config.get('difficulty', 'easy')}")
+            print(f" 6. PVP                  : {config.get('pvp', 'true')}")
+            print(f" 7. Whitelist            : {config.get('white-list', 'false')}")
+            print(f" 8. Online Mode (Cracked): {config.get('online-mode', 'true')}")
+            print(f" 9. Force Game Mode      : {config.get('force-gamemode', 'false')}")
+            print()
+            
+            print(f"{UI.colors.BOLD}World Settings:{UI.colors.RESET}")
+            print(f"10. Spawn Protection     : {config.get('spawn-protection', '16')}")
+            print(f"11. Allow Nether         : {config.get('allow-nether', 'true')}")
+            print(f"12. Spawn Monsters       : {config.get('spawn-monsters', 'true')}")
+            print(f"13. View Distance        : {config.get('view-distance', '10')}")
+            print()
+            
+            print(f"{UI.colors.BOLD}Advanced Settings:{UI.colors.RESET}")
+            print(f"14. Enable Command Blocks: {config.get('enable-command-block', 'false')}")
+            print(f"15. Allow Flight         : {config.get('allow-flight', 'false')}")
+            print(f"16. Resource Pack        : {config.get('resource-pack', '')}")
+            print()
+            
+            print("0. Back to main menu")
+            print()
+            
+            choice = input(f"{UI.colors.YELLOW}Select option to edit (0-16): {UI.colors.RESET}").strip()
+            
+            if choice == "0":
+                return
+            
+            # Handle each configuration option
+            try:
+                if choice == "1":
+                    current_value = config.get('server-port', '25565')
+                    new_value = input(f"Server Port [{current_value}]: ").strip()
+                    if new_value:
+                        config['server-port'] = new_value
+                        self._save_server_properties(config, properties_file, current)
                 
-                if new_value:
-                    config[key] = new_value
+                elif choice == "2":
+                    current_value = config.get('max-players', '20')
+                    new_value = input(f"Maximum Players [{current_value}]: ").strip()
+                    if new_value:
+                        config['max-players'] = new_value
+                        self._save_server_properties(config, properties_file, current)
+                
+                elif choice == "3":
+                    current_value = config.get('motd', 'A Minecraft Server')
+                    new_value = input(f"Message of the Day [{current_value}]: ").strip()
+                    if new_value:
+                        config['motd'] = new_value if new_value else current_value
+                        self._save_server_properties(config, properties_file, current)
+                
+                elif choice == "4":
+                    current_value = config.get('gamemode', 'survival')
+                    print("Game Modes: survival, creative, adventure, spectator")
+                    new_value = input(f"Game Mode [{current_value}]: ").strip()
+                    if new_value and new_value in ['survival', 'creative', 'adventure', 'spectator']:
+                        config['gamemode'] = new_value
+                        self._save_server_properties(config, properties_file, current)
+                    elif new_value:
+                        print_error("Invalid game mode. Use: survival, creative, adventure, or spectator")
+                        input("\nPress Enter to continue...")
+                
+                elif choice == "5":
+                    current_value = config.get('difficulty', 'easy')
+                    print("Difficulties: peaceful, easy, normal, hard")
+                    new_value = input(f"Difficulty [{current_value}]: ").strip()
+                    if new_value and new_value in ['peaceful', 'easy', 'normal', 'hard']:
+                        config['difficulty'] = new_value
+                        self._save_server_properties(config, properties_file, current)
+                    elif new_value:
+                        print_error("Invalid difficulty. Use: peaceful, easy, normal, or hard")
+                        input("\nPress Enter to continue...")
+                
+                elif choice == "6":
+                    current_value = config.get('pvp', 'true')
+                    print("PVP: true or false")
+                    new_value = input(f"Enable PVP [{current_value}]: ").strip()
+                    if new_value and new_value.lower() in ['true', 'false']:
+                        config['pvp'] = new_value.lower()
+                        self._save_server_properties(config, properties_file, current)
+                    elif new_value:
+                        print_error("Invalid value. Use: true or false")
+                        input("\nPress Enter to continue...")
+                
+                elif choice == "7":
+                    current_value = config.get('white-list', 'false')
+                    print("Whitelist: true or false")
+                    new_value = input(f"Enable Whitelist [{current_value}]: ").strip()
+                    if new_value and new_value.lower() in ['true', 'false']:
+                        config['white-list'] = new_value.lower()
+                        self._save_server_properties(config, properties_file, current)
+                    elif new_value:
+                        print_error("Invalid value. Use: true or false")
+                        input("\nPress Enter to continue...")
+                
+                elif choice == "8":
+                    current_value = config.get('online-mode', 'true')
+                    print("Online Mode (Cracked): true or false")
+                    new_value = input(f"Online Mode [{current_value}]: ").strip()
+                    if new_value and new_value.lower() in ['true', 'false']:
+                        config['online-mode'] = new_value.lower()
+                        self._save_server_properties(config, properties_file, current)
+                    elif new_value:
+                        print_error("Invalid value. Use: true or false")
+                        input("\nPress Enter to continue...")
+                
+                elif choice == "9":
+                    current_value = config.get('force-gamemode', 'false')
+                    print("Force Game Mode: true or false")
+                    new_value = input(f"Force Game Mode [{current_value}]: ").strip()
+                    if new_value and new_value.lower() in ['true', 'false']:
+                        config['force-gamemode'] = new_value.lower()
+                        self._save_server_properties(config, properties_file, current)
+                    elif new_value:
+                        print_error("Invalid value. Use: true or false")
+                        input("\nPress Enter to continue...")
+                
+                elif choice == "10":
+                    current_value = config.get('spawn-protection', '16')
+                    new_value = input(f"Spawn Protection [{current_value}]: ").strip()
+                    if new_value:
+                        try:
+                            int(new_value)  # Validate it's a number
+                            config['spawn-protection'] = new_value
+                            self._save_server_properties(config, properties_file, current)
+                        except ValueError:
+                            print_error("Invalid value. Must be a number.")
+                            input("\nPress Enter to continue...")
+                
+                elif choice == "11":
+                    current_value = config.get('allow-nether', 'true')
+                    print("Allow Nether: true or false")
+                    new_value = input(f"Allow Nether [{current_value}]: ").strip()
+                    if new_value and new_value.lower() in ['true', 'false']:
+                        config['allow-nether'] = new_value.lower()
+                        self._save_server_properties(config, properties_file, current)
+                    elif new_value:
+                        print_error("Invalid value. Use: true or false")
+                        input("\nPress Enter to continue...")
+                
+                elif choice == "12":
+                    current_value = config.get('spawn-monsters', 'true')
+                    print("Spawn Monsters: true or false")
+                    new_value = input(f"Spawn Monsters [{current_value}]: ").strip()
+                    if new_value and new_value.lower() in ['true', 'false']:
+                        config['spawn-monsters'] = new_value.lower()
+                        self._save_server_properties(config, properties_file, current)
+                    elif new_value:
+                        print_error("Invalid value. Use: true or false")
+                        input("\nPress Enter to continue...")
+                
+                elif choice == "13":
+                    current_value = config.get('view-distance', '10')
+                    new_value = input(f"View Distance [{current_value}]: ").strip()
+                    if new_value:
+                        try:
+                            int(new_value)  # Validate it's a number
+                            config['view-distance'] = new_value
+                            self._save_server_properties(config, properties_file, current)
+                        except ValueError:
+                            print_error("Invalid value. Must be a number.")
+                            input("\nPress Enter to continue...")
+                
+                elif choice == "14":
+                    current_value = config.get('enable-command-block', 'false')
+                    print("Enable Command Blocks: true or false")
+                    new_value = input(f"Enable Command Blocks [{current_value}]: ").strip()
+                    if new_value and new_value.lower() in ['true', 'false']:
+                        config['enable-command-block'] = new_value.lower()
+                        self._save_server_properties(config, properties_file, current)
+                    elif new_value:
+                        print_error("Invalid value. Use: true or false")
+                        input("\nPress Enter to continue...")
+                
+                elif choice == "15":
+                    current_value = config.get('allow-flight', 'false')
+                    print("Allow Flight: true or false")
+                    new_value = input(f"Allow Flight [{current_value}]: ").strip()
+                    if new_value and new_value.lower() in ['true', 'false']:
+                        config['allow-flight'] = new_value.lower()
+                        self._save_server_properties(config, properties_file, current)
+                    elif new_value:
+                        print_error("Invalid value. Use: true or false")
+                        input("\nPress Enter to continue...")
+                
+                elif choice == "16":
+                    current_value = config.get('resource-pack', '')
+                    new_value = input(f"Resource Pack URL [{current_value}]: ").strip()
+                    if new_value:
+                        config['resource-pack'] = new_value
+                        self._save_server_properties(config, properties_file, current)
+                    elif new_value == "":  # Allow clearing the value
+                        config['resource-pack'] = ""
+                        self._save_server_properties(config, properties_file, current)
+                
                 else:
-                    new_value = current_value
-                
-                # Save the configuration
-                try:
-                    with open(properties_file, "w") as f:
-                        f.write("# Minecraft server properties\n")
-                        f.write(f"# Updated by MSM on {time.strftime('%a %b %d %H:%M:%S %Z %Y')}\n\n")
-                        for k, v in config.items():
-                            f.write(f"{k}={v}\n")
-                    
-                    print_success(f"Configuration updated: {key} = {new_value}")
-                    log(f"Updated server property {key} for {current}")
-                    
-                except Exception as e:
-                    print_error(f"Failed to save server.properties: {e}")
-                    log(f"Failed to save server.properties for {current}: {e}", "ERROR")
-            else:
-                print_error("Invalid selection.")
-        except ValueError:
-            print_error("Invalid input.")
+                    print_error("Invalid selection.")
+                    input("\nPress Enter to continue...")
+            
+            except ValueError:
+                print_error("Invalid input.")
+                input("\nPress Enter to continue...")
+    
+    def _save_server_properties(self, config, properties_file, server_name):
+        """Save server properties file."""
+        try:
+            with open(properties_file, "w") as f:
+                f.write("# Minecraft server properties\n")
+                f.write(f"# Updated by MSM on {time.strftime('%a %b %d %H:%M:%S %Z %Y')}\n\n")
+                for k, v in config.items():
+                    f.write(f"{k}={v}\n")
+            
+            print_success("Configuration saved successfully!")
+            log(f"Updated server properties for {server_name}")
+            
+        except Exception as e:
+            print_error(f"Failed to save server.properties: {e}")
+            log(f"Failed to save server.properties for {server_name}: {e}", "ERROR")
         
         input("\nPress Enter to continue...")
     
@@ -1089,6 +1262,47 @@ class ServerManager:
         print()
         input("Press Enter to continue...")
 
+    def show_dashboard_connection_info(self, current_server):
+        """Show connection information on the dashboard."""
+        # Get server configuration to determine port
+        config = ConfigManager.load_server_config(current_server)
+        server_port = config.get("port", 25565)  # Default Minecraft port
+        
+        # Try to get server properties for the actual port
+        server_path = get_servers_root() / current_server
+        properties_file = server_path / "server.properties"
+        
+        if properties_file.exists():
+            try:
+                with open(properties_file, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            key, value = line.split("=", 1)
+                            if key == "server-port":
+                                server_port = int(value)
+                                break
+            except Exception as e:
+                print_warning(f"Could not read server port from properties: {e}")
+        
+        # Get LAN IP address
+        lan_ip = self._get_lan_ip()
+        
+        print()
+        print(f"{UI.colors.BOLD}Connection Information:{UI.colors.RESET}")
+        
+        # Show LAN connection info
+        if lan_ip:
+            print(f"  {UI.colors.CYAN}LAN:{UI.colors.RESET} {lan_ip}:{server_port}")
+        
+        # Show multiplayer/tunnel info
+        tunnel_info = self._get_tunnel_info(current_server, server_port)
+        if tunnel_info:
+            print(f"  {UI.colors.CYAN}Multiplayer:{UI.colors.RESET} {tunnel_info}")
+        else:
+            print(f"  {UI.colors.CYAN}Multiplayer:{UI.colors.RESET} No active tunnel")
+            print(f"    Use Tunneling Manager (option 8) to set up")
+
     def _get_lan_ip(self):
         """Get the local LAN IP address."""
         import socket
@@ -1117,6 +1331,72 @@ class ServerManager:
         except Exception:
             return None
             
+    def _get_tunnel_info(self, server_name, server_port):
+        """Get tunnel information for multiplayer connections."""
+        try:
+            # Check for ngrok tunnels
+            import subprocess
+            import json
+            result = subprocess.run(["curl", "-s", "http://localhost:4040/api/tunnels"], 
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                try:
+                    data = json.loads(result.stdout)
+                    if "tunnels" in data and data["tunnels"]:
+                        for tunnel in data["tunnels"]:
+                            if tunnel.get("proto") == "tcp":
+                                # Extract the public URL
+                                public_url = tunnel.get("public_url", "")
+                                if public_url.startswith("tcp://"):
+                                    # Convert tcp:// to a more user-friendly format
+                                    host_port = public_url[6:]  # Remove "tcp://"
+                                    return host_port
+                except json.JSONDecodeError:
+                    pass
+        except Exception:
+            pass
+        
+        # Check for pinggy.io tunnels
+        try:
+            import subprocess
+            import re
+            result = subprocess.run(["ps", "aux"], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                # Look for pinggy-related SSH connections
+                lines = result.stdout.split('\n')
+                for line in lines:
+                    if 'ssh' in line and 'pinggy' in line and str(server_port) in line:
+                        # For pinggy, we can't extract the actual URL from the process
+                        # The user needs to look at the terminal output when starting the tunnel
+                        return "See tunnel terminal output"
+        except Exception:
+            pass
+        
+        # Check for other tunnel services
+        try:
+            import subprocess
+            # Check for cloudflared tunnels
+            result = subprocess.run(["pgrep", "cloudflared"], 
+                                  capture_output=True, text=True, timeout=3)
+            if result.returncode == 0:
+                return "See Cloudflare dashboard"
+                
+            # Check for playit.gg tunnels
+            result = subprocess.run(["pgrep", "playit"], 
+                                  capture_output=True, text=True, timeout=3)
+            if result.returncode == 0:
+                return "See playit.gg dashboard"
+                
+            # Check for general pinggy processes
+            result = subprocess.run(["pgrep", "-f", "ssh.*pinggy"], 
+                                  capture_output=True, text=True, timeout=3)
+            if result.returncode == 0:
+                return "See tunnel terminal output"
+        except Exception:
+            pass
+            
+        return None
+
     def _show_tunnel_info(self, server_name, server_port):
         """Show information about active tunnels."""
         print(f"\n{UI.colors.BOLD}Tunneling Information:{UI.colors.RESET}")
@@ -1186,16 +1466,20 @@ class ServerManager:
                 lines = result.stdout.split('\n')
                 for line in lines:
                     if 'ssh' in line and 'pinggy' in line and str(server_port) in line:
-                        # Try to extract the public address from the output
-                        # Look for patterns in the SSH command output
-                        print_info("Pinggy.io Tunnel Active:")
-                        print("  Run the pinggy command to see connection details")
-                        print("  The connection string will be in the format:")
+                        # Try to extract the token from the command
+                        match = re.search(r'([a-zA-Z0-9]+)\+tcp@free\.pinggy\.io', line)
+                        if match:
+                            token_prefix = match.group(1)[:8]  # First 8 characters of token
+                            print_info(f"Pinggy.io Tunnel Active (token: {token_prefix}...):")
+                        else:
+                            print_info("Pinggy.io Tunnel Active:")
+                        print("  When you start the tunnel, look for output like:")
                         print("  tcp://randomstring.a.pinggy.link:portnumber")
+                        print("  Use this address to connect to your Minecraft server")
                         return
                         
                 # Check for general pinggy processes
-                result = subprocess.run(["pgrep", "-f", "pinggy"], 
+                result = subprocess.run(["pgrep", "-f", "ssh.*pinggy"], 
                                       capture_output=True, text=True, timeout=3)
                 if result.returncode == 0:
                     print_info("Pinggy.io Tunnel Active:")
@@ -1208,3 +1492,5 @@ class ServerManager:
         print_info("No active tunnels detected.")
         print_info("Use the Tunneling Manager (option 8) to set up tunnels for")
         print_info("external multiplayer access.")
+        print_info("For pinggy.io, the connection address will appear in the")
+        print_info("terminal output when you start the tunnel.")
