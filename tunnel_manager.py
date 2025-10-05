@@ -246,7 +246,20 @@ class RobustTunnelManager:
                 r"(https?://[a-zA-Z0-9.-]+\.playit\.gg:\d+)",
                 r"(https?://[a-zA-Z0-9.-]+\.joinmc\.link:\d+)",
                 r"([a-zA-Z0-9]+\.joinmc\.link:\d+)",
-                r"(tcp://[a-zA-Z0-9]+\.joinmc\.link:\d+)"
+                r"(tcp://[a-zA-Z0-9]+\.joinmc\.link:\d+)",
+                # Additional patterns for playit.gg URLs
+                r"(https?://[a-zA-Z0-9.-]+\.playit\.gg)",
+                r"(https?://[a-zA-Z0-9.-]+\.joinmc\.link)",
+                r"([a-zA-Z0-9.-]+\.playit\.gg)",
+                r"(playit\.gg/[a-zA-Z0-9.-]+)",
+                r"(joinmc\.link/[a-zA-Z0-9.-]+)",
+                # Additional patterns to capture more URL formats
+                r"([a-zA-Z0-9.-]+\.playit\.gg)",
+                r"([a-zA-Z0-9]+\.joinmc\.link)",
+                r"(https?://[a-zA-Z0-9.-]+\.playit\.gg:\d+)",
+                r"(https?://[a-zA-Z0-9.-]+\.joinmc\.link:\d+)",
+                r"([a-zA-Z0-9.-]+\.playit\.gg:\d+)",
+                r"([a-zA-Z0-9.-]+\.joinmc\.link:\d+)"
             ],
             TunnelService.NGROK: [
                 r"(tcp://[0-9]+\.tcp\.[a-z0-9]+\.ngrok\.io:\d+)",
@@ -336,6 +349,7 @@ class RobustTunnelManager:
                 print("7. Force recovery")
                 print("8. View metrics")
                 print("9. Export diagnostics")
+                print("10. View tunnel logs")
             
             print("0. Back")
             
@@ -359,6 +373,8 @@ class RobustTunnelManager:
                 self._show_metrics()
             elif choice == "9" and self.current_config:
                 self._export_diagnostics()
+            elif choice == "10" and self.current_config:
+                self._view_tunnel_logs()
             elif choice == "0":
                 break
             else:
@@ -395,6 +411,9 @@ class RobustTunnelManager:
             
         if config.url:
             print(f"  URL: {UI.colors.CYAN}{config.url}{UI.colors.RESET}")
+        elif config.state == TunnelState.RUNNING:
+            # Show a message when tunnel is running but URL is not detected
+            print(f"  URL: {UI.colors.YELLOW}Not detected yet - check logs{UI.colors.RESET}")
             
         if config.claim_url:
             print(f"  Claim: {UI.colors.CYAN}{config.claim_url}{UI.colors.RESET}")
@@ -630,6 +649,10 @@ class RobustTunnelManager:
         if not current_config:
             return
             
+        # Enhanced debugging for playit.gg
+        if current_config.service == TunnelService.PLAYIT:
+            log(f"Processing playit.gg output line: {line}")
+            
         # Check for claim URLs first (playit.gg specific)
         for pattern in claim_patterns:
             match = re.search(pattern, line)
@@ -653,6 +676,33 @@ class RobustTunnelManager:
                     log(f"Tunnel URL found: {url}")
                     self._save_tunnel_config()
                     break
+            
+        # Additional check for playit.gg specific formats
+        if current_config.service == TunnelService.PLAYIT:
+            # Check for common playit.gg URL patterns that might be missed
+            playit_patterns = [
+                r"([a-zA-Z0-9.-]+\.playit\.gg:\d+)",
+                r"([a-zA-Z0-9.-]+\.joinmc\.link:\d+)",
+                r"(https?://[a-zA-Z0-9.-]+\.playit\.gg:\d+)",
+                r"(https?://[a-zA-Z0-9.-]+\.joinmc\.link:\d+)",
+                r"([a-zA-Z0-9.-]+\.playit\.gg)",
+                r"([a-zA-Z0-9.-]+\.joinmc\.link)",
+                r"(https?://[a-zA-Z0-9.-]+\.playit\.gg)",
+                r"(https?://[a-zA-Z0-9.-]+\.joinmc\.link)"
+            ]
+            
+            for pattern in playit_patterns:
+                match = re.search(pattern, line)
+                if match:
+                    url = match.group(1)
+                    # Normalize URL format
+                    url = self._normalize_tunnel_url(url, current_config)
+                    
+                    if url != current_config.url:
+                        current_config.url = url
+                        log(f"Additional playit.gg URL found: {url}")
+                        self._save_tunnel_config()
+                        break
 
     def _normalize_tunnel_url(self, url: str, current_config: Optional[TunnelConfig] = None) -> str:
         """Normalize tunnel URL format based on service."""
@@ -675,6 +725,17 @@ class RobustTunnelManager:
                     url = "tcp://" + url
         elif service == TunnelService.CLOUDFLARED and not url.startswith("https://"):
             url = "https://" + url
+            
+        # Additional normalization for playit.gg URLs
+        if service == TunnelService.PLAYIT:
+            # Add default port if missing for playit.gg
+            if not re.search(r":\d+$", url) and not url.startswith("https://"):
+                # If it's a playit.gg or joinmc.link URL without port, add default Minecraft port
+                if ".playit.gg" in url or ".joinmc.link" in url:
+                    if not url.startswith(("tcp://", "https://")):
+                        url = "tcp://" + url + ":25565"
+                    elif not re.search(r":\d+$", url):
+                        url = url + ":25565"
             
         return url
     
@@ -704,6 +765,8 @@ class RobustTunnelManager:
                     uptime = datetime.now() - current_config.metrics.start_time
                     if uptime.total_seconds() > 5:
                         log("Playit.gg process running, assuming tunnel is ready")
+                        # Even if no URL found, mark as ready since the process is running
+                        # This allows users to check the logs for the actual URL
                         return True
                         
             # For some services, just having the process running is enough
@@ -882,50 +945,22 @@ class RobustTunnelManager:
             return False
     
     def _install_playit(self) -> bool:
-        """Install playit.gg using official methods from playit.gg/download/linux."""
-        install_attempts = [
-            self._install_playit_official_apt,
-            self._install_playit_direct_binary_v016,
-            self._install_playit_fallback_binary,
-            self._install_playit_manual_wrapper
-        ]
-        
-        for attempt_num, install_method in enumerate(install_attempts, 1):
-            try:
-                print_info(f"Installation attempt {attempt_num}/{len(install_attempts)}...")
-                log(f"Trying installation method: {install_method.__name__}")
-                
-                if install_method():
-                    print_success(f"✅ Installation successful using method {attempt_num}")
-                    # Verify installation works
-                    log("Verifying installation...")
-                    verification_result = self._verify_playit_installation()
-                    if verification_result:
-                        log("Installation verification successful")
-                        return True
-                    else:
-                        log("Installation verification failed")
-                        print_warning("Installation completed but verification failed")
-                        # Even if verification fails, if installation succeeded, we should try to continue
-                        # Check if playit is at least findable
-                        playit_path = shutil.which("playit") or self._find_playit_binary()
-                        if playit_path:
-                            log(f"Playit binary found at {playit_path}, proceeding despite verification failure")
-                            print_info("Playit binary found, continuing...")
-                            return True
-                        else:
-                            log("Playit binary not found, trying next method")
-                        
-            except Exception as e:
-                error_msg = f"Installation method {attempt_num} ({install_method.__name__}) failed: {e}"
-                log(error_msg)
-                import traceback
-                log(f"Traceback: {traceback.format_exc()}")
-                print_warning(f"Method {attempt_num} failed: {str(e)[:100]}...")
-                
-        print_error("All playit installation methods failed")
-        self._show_playit_troubleshooting()
-        return False
+        """Install playit.gg using the most reliable direct binary download method."""
+        try:
+            print_info("Installing playit.gg...")
+            log("Attempting direct binary installation")
+            
+            # Use only the direct binary download method as it's most reliable
+            return self._install_playit_direct_binary_v016()
+            
+        except Exception as e:
+            error_msg = f"Playit installation failed: {e}"
+            log(error_msg)
+            import traceback
+            log(f"Traceback: {traceback.format_exc()}")
+            print_error(f"Failed to install playit.gg: {e}")
+            self._show_playit_troubleshooting()
+            return False
 
     def _install_playit_official_apt(self) -> bool:
         """Install playit using the official APT method from playit.gg."""
@@ -1411,33 +1446,6 @@ exec "$PLAYIT_BINARY" "$@"
             log(f"Traceback: {traceback.format_exc()}")
             return False
 
-    def _find_playit_binary(self) -> Optional[str]:
-        """Find playit binary in common locations."""
-        # Check common locations where playit might be installed
-        common_paths = [
-            "/usr/bin/playit",
-            "/usr/local/bin/playit",
-            str(self.bin_dir / "playit")
-        ]
-        
-        for path in common_paths:
-            if os.path.exists(path) and os.access(path, os.X_OK):
-                return path
-        
-        # Try to find with find command
-        try:
-            find_result = subprocess.run(["find", "/", "-name", "playit", "-type", "f", "-executable"], 
-                                       capture_output=True, text=True, timeout=30)
-            if find_result.returncode == 0 and find_result.stdout.strip():
-                found_paths = find_result.stdout.strip().split('\n')
-                for path in found_paths:
-                    if path:
-                        return path
-        except Exception as e:
-            log(f"Find command failed: {e}")
-        
-        return None
-
     def _show_playit_troubleshooting(self):
         """Show troubleshooting information for playit.gg installation."""
         print_warning("\n🛠️  Playit.gg Installation Troubleshooting:")
@@ -1608,7 +1616,10 @@ exec "$PLAYIT_BINARY" "$@"
         command.extend(["--config", str(config_dir)])
         
         # Add flags to make it more verbose for better URL detection
-        command.extend(["--log-level", "info"])
+        command.extend(["--log-level", "debug"])  # Increased verbosity
+        
+        # Add flag to show all connection information
+        command.extend(["--show-connection-info"])
         
         return command
 
@@ -1985,6 +1996,43 @@ exec "$PLAYIT_BINARY" "$@"
         except Exception as e:
             print_error(f"Failed to export diagnostics: {e}")
             log(f"Diagnostic export error: {e}")
+            
+        input("\nPress Enter to continue...")
+    
+    def _view_tunnel_logs(self):
+        """View recent tunnel logs to help with debugging."""
+        if not self.current_config:
+            print_warning("No active tunnel")
+            return
+            
+        clear_screen()
+        print_header("1.2.0")
+        print(f"{UI.colors.BOLD}Tunnel Logs - {self.current_config.service.value}{UI.colors.RESET}\n")
+        
+        if not self.tunnel_logfile.exists():
+            print_info("No log file found")
+            input("\nPress Enter to continue...")
+            return
+            
+        try:
+            # Read last 50 lines of log file
+            with open(self.tunnel_logfile, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+                recent_lines = lines[-50:] if len(lines) > 50 else lines
+                
+            if not recent_lines:
+                print_info("Log file is empty")
+            else:
+                print(f"{UI.colors.BOLD}Recent log output:{UI.colors.RESET}")
+                for line in recent_lines:
+                    # Remove timestamp if present
+                    clean_line = line
+                    if line.startswith('[') and ']' in line:
+                        clean_line = line.split(']', 1)[1].strip() if len(line.split(']', 1)) > 1 else line
+                    print(f"  {clean_line.rstrip()}")
+                    
+        except Exception as e:
+            print_error(f"Error reading logs: {e}")
             
         input("\nPress Enter to continue...")
     
