@@ -17,8 +17,8 @@ import psutil
 import socket
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
-from dataclasses import dataclass, asdict
+from typing import Dict, List, Optional, Tuple, Any, Union, cast
+from dataclasses import dataclass, asdict, field
 from enum import Enum
 import re
 import logging
@@ -59,12 +59,8 @@ class TunnelMetrics:
     bytes_transferred: int = 0
     restart_count: int = 0
     last_error: Optional[str] = None
-    response_times: List[float] = None
+    response_times: List[float] = field(default_factory=list)
     
-    def __post_init__(self):
-        if self.response_times is None:
-            self.response_times = []
-
 @dataclass
 class TunnelConfig:
     """Tunnel configuration and state."""
@@ -453,6 +449,11 @@ class RobustTunnelManager:
                     preexec_fn=os.setsid  # Create process group
                 )
                 
+                # Check if we have a current config before accessing attributes
+                if not self.current_config:
+                    self._cleanup_failed_process(process)
+                    return False
+                    
                 self.current_config.pid = process.pid
                 self.current_config.state = TunnelState.STARTING
                 self.current_config.metrics.connection_attempts += 1
@@ -477,14 +478,22 @@ class RobustTunnelManager:
                     
             except Exception as e:
                 log(f"Tunnel start attempt {attempt + 1} failed: {e}")
-                self.current_config.metrics.failed_connections += 1
-                self.current_config.metrics.last_error = str(e)
+                # Check if we have a current config before accessing attributes
+                if self.current_config:
+                    self.current_config.metrics.failed_connections += 1
+                    self.current_config.metrics.last_error = str(e)
                 
-        self.current_config.state = TunnelState.FAILED
+        # Check if we have a current config before accessing attributes
+        if self.current_config:
+            self.current_config.state = TunnelState.FAILED
         return False
     
     def _enhanced_output_monitor(self, process: subprocess.Popen):
         """Enhanced output monitoring with pattern matching and logging."""
+        # Check if we have a current config before accessing attributes
+        if not self.current_config:
+            return
+            
         patterns = self.service_patterns.get(self.current_config.service, [])
         claim_patterns = [
             r"(https?://[a-zA-Z0-9.-]+\.playit\.gg/claim/[a-zA-Z0-9-]+)",
@@ -494,19 +503,20 @@ class RobustTunnelManager:
         try:
             while True:
                 # Use select for non-blocking read with timeout
-                ready, _, _ = select.select([process.stdout], [], [], 1.0)
-                
-                if ready:
-                    line = process.stdout.readline()
-                    if not line:
-                        break
+                if process.stdout:
+                    ready, _, _ = select.select([process.stdout], [], [], 1.0)
+                    
+                    if ready:
+                        line = process.stdout.readline()
+                        if not line:
+                            break
+                            
+                        # Log all output
+                        self._append_to_log(line.strip())
                         
-                    # Log all output
-                    self._append_to_log(line.strip())
-                    
-                    # Extract URLs
-                    self._extract_urls_from_line(line, patterns, claim_patterns)
-                    
+                        # Extract URLs
+                        self._extract_urls_from_line(line, patterns, claim_patterns)
+                
                 # Check if process is still running
                 if process.poll() is not None:
                     break
@@ -523,6 +533,10 @@ class RobustTunnelManager:
     
     def _extract_urls_from_line(self, line: str, patterns: List[str], claim_patterns: List[str]):
         """Extract tunnel URLs and claim URLs from output line."""
+        # Check if we have a current config
+        if not self.current_config:
+            return
+            
         # Check for claim URLs first (playit.gg specific)
         for pattern in claim_patterns:
             match = re.search(pattern, line)
@@ -546,25 +560,33 @@ class RobustTunnelManager:
                     log(f"Tunnel URL found: {url}")
                     self._save_tunnel_config()
                     break
-    
+
     def _normalize_tunnel_url(self, url: str) -> str:
         """Normalize tunnel URL format based on service."""
+        if not self.current_config:
+            return url
+            
         service = self.current_config.service
         
+        # Ensure proper protocol prefix
         if service in [TunnelService.PLAYIT, TunnelService.NGROK, TunnelService.PINGGY]:
             if not url.startswith(("tcp://", "https://")):
+                # Check if it's a joinmc.link domain
                 if ".joinmc.link" in url:
-                    return f"https://{url}"
+                    url = "https://" + url
                 else:
-                    return f"tcp://{url}"
-        elif service == TunnelService.CLOUDFLARED:
-            if not url.startswith("https://"):
-                return f"https://{url}"
-                
+                    url = "tcp://" + url
+        elif service == TunnelService.CLOUDFLARED and not url.startswith("https://"):
+            url = "https://" + url
+            
         return url
     
     def _wait_for_tunnel_ready(self, timeout: int = 30) -> bool:
         """Wait for tunnel to be ready with timeout."""
+        # Check if we have a current config
+        if not self.current_config:
+            return False
+            
         start_time = time.time()
         
         while time.time() - start_time < timeout:
@@ -598,6 +620,10 @@ class RobustTunnelManager:
     
     def _stop_tunnel_internal(self, show_messages: bool = True):
         """Internal tunnel stopping logic."""
+        # Check if we have a current config
+        if not self.current_config:
+            return
+            
         if show_messages:
             print_info(f"Stopping {self.current_config.service.value} tunnel...")
             
@@ -621,6 +647,7 @@ class RobustTunnelManager:
     
     def restart_tunnel(self):
         """Restart the current tunnel with enhanced error handling."""
+        # Check if we have a current config
         if not self.current_config:
             print_warning("No tunnel to restart")
             return
@@ -721,8 +748,8 @@ class RobustTunnelManager:
         except:
             pass
         return 25565
-    
-        def _install_service(self, service: TunnelService) -> bool:
+
+    def _install_service(self, service: TunnelService) -> bool:
         """Install a tunnel service with comprehensive error handling."""
         print_info(f"Installing {service.value}...")
         
@@ -909,6 +936,10 @@ class RobustTunnelManager:
     
     def _build_tunnel_command(self) -> List[str]:
         """Build the appropriate tunnel command based on service."""
+        # Check if we have a current config
+        if not self.current_config:
+            return []
+            
         command_builders = {
             TunnelService.PLAYIT: self._build_playit_command,
             TunnelService.NGROK: self._build_ngrok_command,
@@ -924,6 +955,10 @@ class RobustTunnelManager:
     
     def _build_playit_command(self) -> List[str]:
         """Build playit.gg command with enhanced options."""
+        # Check if we have a current config
+        if not self.current_config:
+            return []
+            
         playit_path = shutil.which("playit") or str(self.bin_dir / "playit")
         
         # Basic command
@@ -941,9 +976,13 @@ class RobustTunnelManager:
         command.extend(["--config", str(config_dir)])
         
         return command
-    
+
     def _build_ngrok_command(self) -> List[str]:
         """Build ngrok command with enhanced configuration."""
+        # Check if we have a current config
+        if not self.current_config:
+            return []
+            
         ngrok_path = shutil.which("ngrok") or str(self.bin_dir / "ngrok")
         
         return [
@@ -952,9 +991,13 @@ class RobustTunnelManager:
             "--log", "stdout",
             "--log-level", "info"
         ]
-    
+
     def _build_cloudflared_command(self) -> List[str]:
         """Build cloudflared tunnel command."""
+        # Check if we have a current config
+        if not self.current_config:
+            return []
+            
         cloudflared_path = shutil.which("cloudflared") or str(self.bin_dir / "cloudflared")
         
         return [
@@ -963,9 +1006,13 @@ class RobustTunnelManager:
             "--no-autoupdate",
             "--logfile", str(self.tunnel_logfile)
         ]
-    
+
     def _build_pinggy_command(self) -> List[str]:
         """Build pinggy SSH tunnel command."""
+        # Check if we have a current config
+        if not self.current_config:
+            return []
+            
         return [
             "ssh", "-o", "StrictHostKeyChecking=no",
             "-o", "ServerAliveInterval=30",
