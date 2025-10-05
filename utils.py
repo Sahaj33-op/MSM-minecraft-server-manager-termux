@@ -68,7 +68,7 @@ def self_update():
     """
     from ui import print_info, print_success, print_error, Colors
     
-    SCRIPT_URL = "https://raw.githubusercontent.com/Sahaj33-op/MSM-minecraft-server-manager-termux/main/msm.py"
+    SCRIPT_URL = "https://raw.githubusercontent.com/Sahaj33-op/MSM-minecraft-server-manager-termux/main-v1.1.0/msm.py"
     
     print_info("Checking for updates...")
     log("Starting self-update check")

@@ -49,8 +49,8 @@ A comprehensive tool for managing Minecraft servers on Termux with Debian (proot
 
 ```bash
 # Clone the repository
-git clone <repository-url>
-cd msm
+git clone --branch main-v1.1.0 https://github.com/Sahaj33-op/MSM-minecraft-server-manager-termux.git
+cd MSM-minecraft-server-manager-termux
 
 # Run the manager
 python main.py

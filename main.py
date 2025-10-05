@@ -7,7 +7,7 @@ MSM - Enhanced Minecraft Server Manager for Termux with Debian (proot-distro)
 Version: 1.1.0 (Modular, Optimized)
 Author: Sahaj33-op
 License: MIT
-Repository: https://github.com/Sahaj33-op/MSM-minecraft-server-manager-termux
+Repository: https://github.com/Sahaj33-op/MSM-minecraft-server-manager-termux/tree/main-v1.1.0
 """
 
 import sys

@@ -1646,7 +1646,29 @@ class NetworkHelper:
     def get_active_tunnel_info(self):
         """Get information about active tunnels from tunnel manager."""
         try:
-            # Try to read tunnel info from tunnel manager files
+            # Try to read tunnel info from the new tunnel manager configuration
+            from config import get_config_root
+            from tunnel_manager import TunnelManager
+            config_root = get_config_root()
+            tunnel_config_file = config_root / "tunnel_config.json"
+            
+            if tunnel_config_file.exists():
+                import json
+                with open(tunnel_config_file, 'r', encoding='utf-8') as f:
+                    config_data = json.load(f)
+                
+                # Check if tunnel is running
+                if config_data.get("state") == "running" and config_data.get("pid"):
+                    return {
+                        "service": config_data.get("service", "unknown"),
+                        "pid": config_data.get("pid"),
+                        "url": config_data.get("url")
+                    }
+        except Exception:
+            pass
+        
+        # Fallback to old method
+        try:
             from config import get_config_root
             config_root = get_config_root()
             tunnel_pidfile = config_root / "tunnel.pid"
