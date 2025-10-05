@@ -21,12 +21,15 @@ def is_inside_proot() -> bool:
     """
     Detect if running inside proot using multiple robust checks.
     """
+    # Check for proot-specific files/directories
     if Path("/.proot").exists():
         return True
     
+    # Check environment variables
     if os.environ.get("PROOT_TMP_DIR"):
         return True
     
+    # Check mount information
     try:
         with open("/proc/self/mountinfo", "r") as f:
             mountinfo = f.read().lower()
@@ -35,13 +38,18 @@ def is_inside_proot() -> bool:
     except:
         pass
     
+    # Check process version info
     try:
         with open("/proc/version", "r") as f:
             version = f.read().lower()
-            if "proot" in version:
+            if "proot" in version or "termux" in version:
                 return True
     except:
         pass
+    
+    # Additional check for Termux environment
+    if "com.termux" in os.environ.get("PREFIX", "") or "com.termux" in os.environ.get("HOME", ""):
+        return True
     
     return False
 
