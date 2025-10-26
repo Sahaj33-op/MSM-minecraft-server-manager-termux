@@ -24,6 +24,11 @@ from managers.world_manager import WorldManager
 from managers.tunnel_manager import TunnelManager
 from managers.plugin_manager import PluginManager  # Import PluginManager
 from ui.interface import UI
+from utils.termux_utils import (
+    is_termux_environment, optimize_for_termux, 
+    check_required_packages, get_android_info
+)
+from utils.decorators import handle_errors, performance_monitor
 
 VERSION = "Unified"
 
@@ -46,6 +51,8 @@ global_scheduler = None  # Scheduler
 def graceful_shutdown(signum=None, frame=None):
     """Gracefully shutdown the application, stopping all services."""
     try:
+        print("\n\nShutting down MSM...")
+        
         if server_mgr is not None:
             cur = server_mgr.get_current_server()
             if cur and monitor is not None:
@@ -76,20 +83,44 @@ def graceful_shutdown(signum=None, frame=None):
     except Exception as e:
         if logger:
             logger.log('ERROR', f'Error during shutdown: {e}')
+        print(f"Error during shutdown: {e}")
     
     if logger is not None:
         logger.log('INFO', "MSM shutting down.")
+    print("MSM shutdown complete.")
     sys.exit(0)
 
 def ensure_infra():
     """Ensure the infrastructure directories exist."""
     os.makedirs(CONFIG_DIR, exist_ok=True)
 
+@performance_monitor()
 def init_system():
     """Initialize all system components including managers, database, logger, etc."""
     global logger, db, monitor, ui, server_mgr, world_mgr, tunnel_mgr, plugin_mgr, global_scheduler
 
     try:
+        # Apply Termux optimizations if running in Termux
+        if is_termux_environment():
+            logger_temp = EnhancedLogger(LOG_FILE)
+            logger_temp.log('INFO', 'Termux environment detected, applying optimizations...')
+            
+            # Apply optimizations
+            optimizations = optimize_for_termux()
+            logger_temp.log('INFO', f'Applied optimizations: {optimizations}')
+            
+            # Check required packages
+            packages = check_required_packages()
+            missing_packages = [pkg for pkg, installed in packages.items() if not installed]
+            if missing_packages:
+                logger_temp.log('WARNING', f'Missing packages: {missing_packages}')
+            
+            # Get Android info
+            android_info = get_android_info()
+            logger_temp.log('INFO', f'Android info: {android_info}')
+            
+            del logger_temp  # Clean up temporary logger
+        
         ensure_infra()
         logger = EnhancedLogger(LOG_FILE)
         db = DatabaseManager(DB_FILE)
@@ -710,3 +741,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    

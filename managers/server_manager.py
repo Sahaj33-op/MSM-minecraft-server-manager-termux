@@ -12,7 +12,7 @@ import urllib.error  # Add this import
 import subprocess
 import psutil  # Add missing psutil import
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple, Any, Union
 
 # Add imports for custom exceptions
 from core.exceptions import DownloadError, ConfigError, APIError
@@ -648,6 +648,17 @@ class ServerManager:
 
                 cpu_percent = "N/A"
                 mem_percent = "N/A"
+                
+                # Get actual process data if available
+                if server_process and server_process.is_running():
+                    try:
+                        with server_process.oneshot():
+                            cpu_percent = f"{server_process.cpu_percent():.1f}%"
+                            mem_info = server_process.memory_info()
+                            mem_percent = f"{mem_info.rss / (1024 * 1024):.1f} MB"
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        cpu_percent = "N/A"
+                        mem_percent = "N/A"
                 mem_rss_mb = "N/A"
 
                 # Get metrics if process found
@@ -728,9 +739,140 @@ class ServerManager:
         except KeyboardInterrupt:
             self.logger.log('INFO', "Performance dashboard stopped by user.")
             print("\nExiting dashboard...")
+            # Stop monitoring if it was started
+            try:
+                if current_server:
+                    self.monitor.stop_monitoring(current_server)
+            except Exception as e:
+                self.logger.log('WARNING', f'Error stopping monitoring: {e}')
             time.sleep(1)
             return True
         except Exception as e:
             self.logger.log('ERROR', f"Error in performance dashboard: {e}")
             print(f"Dashboard error: {e}")
             return False
+
+    def show_statistics(self):
+        """Display server statistics from the database."""
+        try:
+            current_server = self.get_current_server()
+            if not current_server:
+                print(f"{UI.colors.RED}No server selected.{UI.colors.RESET}")
+                input("\nPress Enter to continue...")
+                return
+
+            if not self.db:
+                print(f"{UI.colors.RED}Database not available.{UI.colors.RESET}")
+                input("\nPress Enter to continue...")
+                return
+
+            # Get server statistics from database
+            stats = self.db.get_server_statistics(current_server)
+            
+            def format_duration(seconds):
+                if not seconds:
+                    return "N/A"
+                seconds = int(seconds)
+                days, rem = divmod(seconds, 86400)
+                hours, rem = divmod(rem, 3600)
+                minutes, _ = divmod(rem, 60)
+                return f"{days}d {hours}h {minutes}m"
+
+            print(f"\n{UI.colors.BOLD}Statistics for: {current_server}{UI.colors.RESET}")
+            print(f"  - Total Sessions:    {UI.colors.CYAN}{stats.get('total_sessions', 'N/A')}{UI.colors.RESET}")
+            print(f"  - Total Uptime:      {UI.colors.CYAN}{format_duration(stats.get('total_uptime'))}{UI.colors.RESET}")
+            print(f"  - Average Session:   {UI.colors.CYAN}{format_duration(stats.get('avg_duration'))}{UI.colors.RESET}")
+            print(f"  - Total Crashes:     {UI.colors.YELLOW}{stats.get('total_crashes', 'N/A')}{UI.colors.RESET}")
+            print(f"  - Total Restarts:    {UI.colors.YELLOW}{stats.get('total_restarts', 'N/A')}{UI.colors.RESET}")
+            print("\n  --- 24-Hour Performance ---")
+            print(f"  - Avg RAM Usage:     {UI.colors.CYAN}{stats.get('avg_ram_usage_24h', 0):.2f}%{UI.colors.RESET}")
+            print(f"  - Avg CPU Usage:     {UI.colors.CYAN}{stats.get('avg_cpu_usage_24h', 0):.2f}%{UI.colors.RESET}")
+            print(f"  - Peak Players:      {UI.colors.CYAN}{stats.get('peak_players_24h', 'N/A')}{UI.colors.RESET}")
+            
+        except Exception as e:
+            if self.logger:
+                self.logger.log('ERROR', f'Failed to show statistics: {e}')
+            print(f"{UI.colors.RED}Failed to load statistics: {e}{UI.colors.RESET}")
+        finally:
+            input("\nPress Enter to continue...")
+
+    def configure_server_menu(self):
+        """Interactive configuration menu for server settings."""
+        try:
+            current_server = self.get_current_server()
+            if not current_server:
+                print(f"{UI.colors.RED}No server selected.{UI.colors.RESET}")
+                input("\nPress Enter to continue...")
+                return
+
+            config = ConfigManager.load()
+            server_config = config.get("servers", {}).get(current_server, {})
+            settings = server_config.get("server_settings", {})
+
+            while True:
+                print(f"\n{UI.colors.BOLD}Configure Server: {current_server}{UI.colors.RESET}")
+                print(f" 1. RAM Allocation: {UI.colors.CYAN}{server_config.get('ram_mb', 1024)} MB{UI.colors.RESET}")
+                print(f" 2. Port: {UI.colors.CYAN}{settings.get('port', 25565)}{UI.colors.RESET}")
+                print(f" 3. Auto Restart: {UI.colors.CYAN}{'Yes' if server_config.get('auto_restart') else 'No'}{UI.colors.RESET}")
+                print(f" 4. MOTD: {UI.colors.CYAN}{settings.get('motd', 'A Minecraft Server')}{UI.colors.RESET}")
+                print(f" 5. Max Players: {UI.colors.CYAN}{settings.get('max-players', 20)}{UI.colors.RESET}")
+                print(f" 0. Back to Main Menu")
+                
+                choice = input(f"\n{UI.colors.YELLOW}Select option to change: {UI.colors.RESET}").strip()
+                
+                try:
+                    if choice == '1':
+                        new_ram = input("Enter new RAM allocation (MB): ").strip()
+                        if new_ram.isdigit():
+                            server_config['ram_mb'] = int(new_ram)
+                            print(f"{UI.colors.GREEN}RAM allocation updated to {new_ram} MB{UI.colors.RESET}")
+                        else:
+                            print(f"{UI.colors.RED}Invalid input. Please enter a number.{UI.colors.RESET}")
+                    elif choice == '2':
+                        new_port = input("Enter new port: ").strip()
+                        if new_port.isdigit() and 1 <= int(new_port) <= 65535:
+                            settings['port'] = int(new_port)
+                            print(f"{UI.colors.GREEN}Port updated to {new_port}{UI.colors.RESET}")
+                        else:
+                            print(f"{UI.colors.RED}Invalid port. Please enter a number between 1-65535.{UI.colors.RESET}")
+                    elif choice == '3':
+                        server_config['auto_restart'] = not server_config.get('auto_restart', False)
+                        status = "enabled" if server_config['auto_restart'] else "disabled"
+                        print(f"{UI.colors.GREEN}Auto restart {status}{UI.colors.RESET}")
+                    elif choice == '4':
+                        new_motd = input("Enter new MOTD: ").strip()
+                        if new_motd:
+                            settings['motd'] = new_motd
+                            print(f"{UI.colors.GREEN}MOTD updated{UI.colors.RESET}")
+                        else:
+                            print(f"{UI.colors.RED}MOTD cannot be empty{UI.colors.RESET}")
+                    elif choice == '5':
+                        new_max_players = input("Enter max players: ").strip()
+                        if new_max_players.isdigit() and 1 <= int(new_max_players) <= 1000:
+                            settings['max-players'] = int(new_max_players)
+                            print(f"{UI.colors.GREEN}Max players updated to {new_max_players}{UI.colors.RESET}")
+                        else:
+                            print(f"{UI.colors.RED}Invalid input. Please enter a number between 1-1000.{UI.colors.RESET}")
+                    elif choice == '0':
+                        break
+                    else:
+                        print(f"{UI.colors.RED}Invalid choice.{UI.colors.RESET}")
+                        continue
+                    
+                    # Update the configuration
+                    server_config['server_settings'] = settings
+                    config['servers'][current_server] = server_config
+                    ConfigManager.save(config)
+                    
+                except ValueError:
+                    print(f"{UI.colors.RED}Invalid input, please enter a number where required.{UI.colors.RESET}")
+                except Exception as e:
+                    if self.logger:
+                        self.logger.log('ERROR', f'Error updating configuration: {e}')
+                    print(f"{UI.colors.RED}Error updating configuration: {e}{UI.colors.RESET}")
+                    
+        except Exception as e:
+            if self.logger:
+                self.logger.log('ERROR', f'Failed to configure server: {e}')
+            print(f"{UI.colors.RED}Failed to configure server: {e}{UI.colors.RESET}")
+            input("\nPress Enter to continue...")

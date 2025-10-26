@@ -12,7 +12,12 @@ import time
 from pathlib import Path
 from typing import Optional, Tuple
 
-def sanitize_input(value: str, max_length: int = 255) -> str:
+from core.constants import (
+    ServerConfig, SecurityConfig, TermuxConfig, 
+    ErrorMessages, SuccessMessages
+)
+
+def sanitize_input(value: str, max_length: int = SecurityConfig.MAX_INPUT_LENGTH) -> str:
     """Enhanced input sanitization with length limits and path traversal protection.
     
     Args:
@@ -89,18 +94,18 @@ def suggest_ram_allocation() -> int:
         total_mb = mem.total // (1024 * 1024)
         available_mb = mem.available // (1024 * 1024)
         
-        # Use 60% of available RAM, but cap at reasonable limits
-        suggested = min(int(available_mb * 0.6), total_mb // 2)
+        # Use configured ratio of available RAM, but cap at reasonable limits
+        suggested = min(int(available_mb * ServerConfig.RAM_ALLOCATION_RATIO), total_mb // 2)
         
         # Ensure minimums and maximums
-        if suggested < 512:
-            return 512
-        elif suggested > 8192:
-            return 8192
+        if suggested < ServerConfig.MIN_RAM_MB:
+            return ServerConfig.MIN_RAM_MB
+        elif suggested > ServerConfig.MAX_RAM_MB:
+            return ServerConfig.MAX_RAM_MB
         
         return suggested
     except Exception:
-        return 1024  # Safe default
+        return ServerConfig.DEFAULT_RAM_MB  # Safe default
 
 def is_screen_session_running(session_name: str) -> bool:
     """Check if a screen session exists and is running.
@@ -144,9 +149,18 @@ def run_command(command, cwd=None, timeout=None, capture_output=False) -> Tuple[
         if not command:
             return -1, "", "Empty command provided"
         
+        # Security: Block dangerous commands that could harm the system
+        if command[0].lower() in SecurityConfig.DANGEROUS_COMMANDS:
+            return -1, "", f"Command '{command[0]}' is not allowed for security reasons"
+        
         # Security: Validate first argument is not a shell metacharacter
-        if command[0] in ['&', '|', ';', '&&', '||', '>', '<', '`', '$', '(', ')']:
+        if command[0] in SecurityConfig.SHELL_METACHARS:
             return -1, "", f"Invalid command: {command[0]}"
+        
+        # Security: Block commands that try to access sensitive paths
+        for arg in command:
+            if any(sensitive_path in arg for sensitive_path in SecurityConfig.SENSITIVE_PATHS):
+                return -1, "", f"Access to sensitive path not allowed: {arg}"
         
         # Security: Use subprocess.run with shell=False to prevent injection
         result = subprocess.run(
