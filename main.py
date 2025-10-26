@@ -695,9 +695,11 @@ def menu_loop():
 def main():
     """Main entry point for the application."""
     # Set up argument parser
-    parser = argparse.ArgumentParser(description="Minecraft Server Manager - Unified")
+    parser = argparse.ArgumentParser(
+        description="Minecraft Server Manager - Unified",
+        add_help=True  # Keep default help behavior
+    )
     parser.add_argument('--version', action='version', version=f'MSM {VERSION}')
-    parser.add_argument('--help', action='help', help='Show this help message and exit')
     
     # Parse arguments
     args = parser.parse_args()
