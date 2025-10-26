@@ -12,6 +12,8 @@ import re      # For finding PID
 from pathlib import Path  # Import Path
 from utils.helpers import is_screen_session_running, get_screen_session_name, check_dependencies, get_server_directory, run_command  # To find log file
 
+# Add imports for custom exceptions
+from core.exceptions import MSMError, APIError, DownloadError, ConfigError
 from core.logger import EnhancedLogger
 from core.database import DatabaseManager
 from core.monitoring import PerformanceMonitor
@@ -620,13 +622,27 @@ def menu_loop():
                     ui.print_error("Invalid option")
                 time.sleep(1)
 
-        except Exception as e:
-            if logger is not None:
-                logger.log('ERROR', f"Unexpected error: {e}")
-            # Also print to UI in case logger failed
-            if ui is not None:
-                ui.print_error(f"An unexpected error occurred: {e}")
-            time.sleep(1)  # Prevent rapid error loops
+        except APIError as e: # Catch specific errors for tailored feedback
+            ui.print_error(f"API Error: {e}")
+            logger.log('ERROR', f"API Error encountered: {e}")
+        except DownloadError as e:
+            ui.print_error(f"Download Error: {e}")
+            logger.log('ERROR', f"Download Error encountered: {e}")
+        except ConfigError as e:
+            ui.print_error(f"Configuration Error: {e}")
+            logger.log('ERROR', f"Configuration Error encountered: {e}")
+        except MSMError as e: # Catch other known MSM errors
+            ui.print_error(f"Error: {e}")
+            logger.log('ERROR', f"MSM Error encountered: {e}")
+        except KeyboardInterrupt: # Keep handling Ctrl+C
+             graceful_shutdown()
+        except Exception as e: # Catch truly unexpected errors
+            logger.log('CRITICAL', f"Unhandled error in main loop: {e}", exc_info=True)
+            ui.print_error(f"An critical unexpected error occurred: {e}")
+
+        # Add input pause after handling errors
+        if 'e' in locals() and isinstance(e, Exception):
+             input("\nPress Enter to continue...")
 
 def main():
     # Set up argument parser

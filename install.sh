@@ -44,10 +44,15 @@ log_info "Installing Python dependencies from requirements.txt..."
 pip install -r requirements.txt
 
 # 5. Make the main script executable
-log_info "Setting execute permissions for msm.py..."
-chmod +x msm.py
+log_info "Setting execute permissions for main.py..."
+chmod +x main.py
+# Add this line later if cli.py is added:
+# chmod +x cli.py
 
 # --- Final Instructions ---
 log_success "MSM has been installed successfully!"
-echo -e "\nTo run the server manager, use the following command:"
-echo -e "${C_GREEN}./msm.py${C_RESET}"
+echo -e "\nTo run the server manager TUI, use the following command:"
+echo -e "${C_GREEN}python3 main.py${C_RESET} or ${C_GREEN}./main.py${C_RESET}"
+# Add this later if cli.py is added:
+# echo -e "\nTo use the command-line interface, use:"
+# echo -e "${C_GREEN}python3 cli.py --help${C_RESET}"

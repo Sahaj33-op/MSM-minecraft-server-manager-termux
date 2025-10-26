@@ -8,10 +8,13 @@ import re
 import time
 import shutil
 import urllib.request
+import urllib.error  # Add this import
 import subprocess
 from pathlib import Path
 from typing import Optional, Dict, List
 
+# Add imports for custom exceptions
+from core.exceptions import DownloadError, ConfigError
 from core.config import ConfigManager
 from core.database import DatabaseManager
 from core.monitoring import PerformanceMonitor
@@ -391,6 +394,7 @@ class ServerManager:
     def _download_server(self, server_name: str, server_type: str, api_class, version: str, flavor_key: str) -> bool:
         """Download and install server JAR or PHAR"""
         server_dir = get_server_directory(server_name)
+        jar_path = None  # Initialize jar_path
         
         try:
             download_url = None
@@ -412,9 +416,11 @@ class ServerManager:
                 loaders = api_class.get_loader_versions()
                 if loaders:
                     download_url = api_class.get_download_url(version, loaders[0])
+                    target_filename = "server.jar" # Default for Fabric/Quilt
             else:
                 # Vanilla API
                 download_url = api_class.get_download_url(version)
+                target_filename = "server.jar" # Default for Vanilla
             
             if not download_url:
                 self.logger.log('ERROR', f'Could not get download URL for {server_type} {version}')
@@ -435,12 +441,9 @@ class ServerManager:
 
             # Verify download
             if not jar_path.exists() or jar_path.stat().st_size == 0:
-                self.logger.log('ERROR', 'Download verification failed')
-                # Clean up empty file
-                if jar_path.exists():
-                    jar_path.unlink()
-                return False
-            
+                # Raise specific exception
+                raise DownloadError("Download verification failed (file missing or empty)")
+
             # Update server config
             server_config = ConfigManager.load_server_config(server_name)
             server_config['server_flavor'] = flavor_key
@@ -456,16 +459,22 @@ class ServerManager:
             self.logger.log('SUCCESS', f'Installed {server_type} {version} for {server_name}')
             return True
             
-        except Exception as e:
-            self.logger.log('ERROR', f'Download failed: {e}')
-            # Clean up potentially incomplete file
-            jar_path = server_dir / target_filename
-            if jar_path.exists():
+        except urllib.error.URLError as e:
+             raise DownloadError(f"Network error during download: {e}") from e
+        except ConfigError as e: # If save_server_config raises it
+             raise ConfigError(f"Failed to save config after download: {e}") from e
+        except DownloadError as e: # Catch specific verification error
+             self.logger.log('ERROR', str(e))
+             # Clean up empty file if possible
+             if jar_path and jar_path.exists():
                  try:
                      jar_path.unlink()
                  except OSError:
                      pass # Ignore cleanup errors
-            return False
+             return False # Return bool for flow control
+        except Exception as e:
+            # Catch broader exceptions but raise a specific DownloadError
+            raise DownloadError(f"Unexpected download failure: {e}") from e
     
     def show_statistics(self):
         """Display server statistics"""

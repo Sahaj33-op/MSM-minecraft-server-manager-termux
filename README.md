@@ -22,6 +22,9 @@ Minecraft Server Manager (MSM) is a professional, enterprise-grade command-line 
 - 💾 **SQLite Database**: Professional session and performance tracking
 - 🔄 **Auto-Restart System**: Smart crash detection with restart limits
 - 🌍 **World Manager**: Complete backup/restore with compression
+- 🧩 **Plugin Management**: Install, enable/disable plugins for Java-based servers
+- 📈 **Performance Dashboard**: Live view of server metrics including TPS and player count
+- ⏰ **Scheduled Tasks**: Automated backups and server restarts
 - 📝 **Enhanced Logging**: Log rotation with 50MB limit and 30-day retention
 - 🛡️ **Security Hardened**: Command injection prevention, input sanitization
 - 🚀 **Performance Optimized**: G1GC tuning, threaded monitoring, connection pooling
@@ -41,6 +44,8 @@ MSM has been restructured with a modular, unified architecture that separates co
 - **Server Manager**: Handles server lifecycle (start, stop, install)
 - **World Manager**: Manages world backups and restoration
 - **Tunnel Manager**: Handles tunneling services (ngrok, cloudflared, etc.)
+- **Plugin Manager**: Handles plugin installation and management
+- **Scheduler**: Handles scheduled tasks like backups and restarts
 - **API Client**: Interfaces with various Minecraft server APIs
 
 ### Utilities
@@ -112,7 +117,10 @@ Main Menu:
  6. 🗄️  World Manager
  7. 📊 Statistics
  8. 🌐 Tunneling
- 9. ➕ Create/Switch Server
+ 9. 📈 Performance Dashboard
+ P. 🔌 Plugin Manager
+ S. ⏰ Scheduler
+10. ➕ Create/Switch Server
  0. 🚪 Exit
 
 Choose option: 
@@ -128,7 +136,10 @@ Choose option:
 6. **🗄️ World Manager**: Backup, restore, and manage worlds
 7. **📊 Statistics**: View server performance and session statistics
 8. **🌐 Tunneling**: Set up tunneling services for external access
-9. **➕ Create/Switch Server**: Create new servers or switch between existing ones
+9. **📈 Performance Dashboard**: View live server metrics including CPU, RAM, TPS, and player count
+P. **🔌 Plugin Manager**: Install, enable/disable plugins for Java-based servers
+S. **⏰ Scheduler**: Set up automated backups and server restarts
+10. **➕ Create/Switch Server**: Create new servers or switch between existing ones
 0. **🚪 Exit**: Gracefully shut down MSM
 
 ## 🌐 Tunneling Services
@@ -168,6 +179,10 @@ python -m tests.test_server_manager
 
 # Run tunnel manager tests
 python -m tests.test_tunnel_manager
+
+# Run enhanced tests
+python -m tests.test_server_manager_enhanced
+python -m tests.test_tunnel_manager_enhanced
 ```
 
 ## 📁 Project Structure

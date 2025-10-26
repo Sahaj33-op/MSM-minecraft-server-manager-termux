@@ -9,6 +9,9 @@ import json
 import ssl
 from typing import List, Dict, Optional
 
+# Add import for custom exceptions
+from core.exceptions import APIError
+
 def log(message: str, level: str = "INFO"):
     """Simple logging fallback"""
     print(f"[{level}] {message}")
@@ -28,9 +31,17 @@ class PaperMCAPI:
                 versions = data.get("versions", [])
                 log(f"Fetched {len(versions)} Paper versions")
                 return versions
+        except urllib.error.URLError as e:
+            # Raise specific exception
+            raise APIError(f"Network error fetching Paper versions: {e}") from e 
+        except json.JSONDecodeError as e:
+            # Raise specific exception
+            raise APIError(f"Failed to decode Paper versions JSON: {e}") from e 
         except Exception as e:
-            log(f"Failed to fetch Paper versions: {e}", "ERROR")
-            return None
+            # Keep generic for truly unexpected, but log it
+            log(f"Unexpected error fetching Paper versions: {e}", "ERROR")
+            # Optionally re-raise as a base MSMError or keep None return
+            return None # Or raise MSMError(f"Unexpected: {e}") from e
     
     @staticmethod
     def get_latest_build(version: str) -> Optional[Dict]:
@@ -46,6 +57,12 @@ class PaperMCAPI:
                     log(f"Latest Paper build for {version}: {latest.get('build')}")
                     return latest
                 return None
+        except urllib.error.URLError as e:
+            # Raise specific exception
+            raise APIError(f"Network error fetching Paper build for {version}: {e}") from e 
+        except json.JSONDecodeError as e:
+            # Raise specific exception
+            raise APIError(f"Failed to decode Paper build JSON for {version}: {e}") from e 
         except Exception as e:
             log(f"Failed to fetch Paper build for {version}: {e}", "ERROR")
             return None
