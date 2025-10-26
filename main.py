@@ -6,6 +6,7 @@ import os
 import sys
 import signal
 import time
+import argparse
 
 from core.logger import EnhancedLogger
 from core.database import DatabaseManager
@@ -15,7 +16,7 @@ from managers.server_manager import ServerManager
 from managers.world_manager import WorldManager
 from managers.tunnel_manager import TunnelManager
 from ui.interface import UI
-from utils.helpers import is_screen_session_running, get_screen_session_name
+from utils.helpers import is_screen_session_running, get_screen_session_name, check_dependencies
 
 VERSION = "Unified"
 
@@ -35,13 +36,14 @@ tunnel_mgr = None
 
 def graceful_shutdown(signum=None, frame=None):
     try:
-        cur = server_mgr.get_current_server()
-        if cur:
-            # Best-effort stop monitor threads before exit
-            monitor.stop_monitoring(cur)
+        if server_mgr is not None:
+            cur = server_mgr.get_current_server()
+            if cur and monitor is not None:
+                # Best-effort stop monitor threads before exit
+                monitor.stop_monitoring(cur)
     except Exception:
         pass
-    if logger:
+    if logger is not None:
         logger.log('INFO', "MSM shutting down.")
     sys.exit(0)
 
@@ -69,6 +71,10 @@ def init_system():
 
 def configure_menu():
     """Configuration menu for server settings"""
+    if server_mgr is None or ui is None or logger is None:
+        print("Error: System not initialized properly")
+        return
+        
     cur = server_mgr.get_current_server()
     if not cur:
         ui.print_error("No server selected")
@@ -94,6 +100,10 @@ def configure_menu():
 
 def world_menu():
     """World management menu"""
+    if server_mgr is None or ui is None or world_mgr is None:
+        print("Error: System not initialized properly")
+        return
+        
     cur = server_mgr.get_current_server()
     if not cur:
         ui.print_error("No server selected")
@@ -154,6 +164,10 @@ def world_menu():
 
 def tunnel_menu():
     """Tunneling menu"""
+    if server_mgr is None or ui is None or tunnel_mgr is None or logger is None:
+        print("Error: System not initialized properly")
+        return
+        
     cur = server_mgr.get_current_server()
     if not cur:
         ui.print_error("No server selected")
@@ -183,6 +197,10 @@ def tunnel_menu():
 
 def server_switch_menu():
     """Create or switch server menu"""
+    if server_mgr is None or ui is None:
+        print("Error: System not initialized properly")
+        return
+        
     print("\nServers:")
     servers = server_mgr.list_servers()
     for i, s in enumerate(servers, 1):
@@ -202,66 +220,74 @@ def server_switch_menu():
             ui.print_error("Invalid selection")
 
 def menu_loop():
+    # Check dependencies before starting
+    if not check_dependencies():
+        sys.exit(1)
+        
     signal.signal(signal.SIGINT, graceful_shutdown)
     signal.signal(signal.SIGTERM, graceful_shutdown)
 
     while True:
         # Header with system info
-        sys_info = monitor.get_system_info()
-        ui.print_header(version=VERSION, system_info=sys_info)
+        if monitor is not None and ui is not None:
+            sys_info = monitor.get_system_info()
+            ui.print_header(version=VERSION, system_info=sys_info)
 
-        current = server_mgr.get_current_server()
-        if current:
-            ui.print_success(f"Current Server: {current}")
-            # Show if running
-            screen_name = get_screen_session_name(current)
-            if is_screen_session_running(screen_name):
-                ui.print_info("Status: RUNNING")
+        if server_mgr is not None and ui is not None:
+            current = server_mgr.get_current_server()
+            if current:
+                ui.print_success(f"Current Server: {current}")
+                # Show if running
+                if ui is not None:
+                    screen_name = get_screen_session_name(current)
+                    if is_screen_session_running(screen_name):
+                        ui.print_info("Status: RUNNING")
+                    else:
+                        ui.print_warning("Status: STOPPED")
             else:
-                ui.print_warning("Status: STOPPED")
-        else:
-            ui.print_warning("No server selected")
+                ui.print_warning("No server selected")
 
         print()
-        print(f"{ui.colors.BOLD}Main Menu:{ui.colors.RESET}")
-        options = [
-            ("1", "🚀 Start Server"),
-            ("2", "⏹️  Stop Server"),
-            ("3", "📦 Install/Update Server"),
-            ("4", "⚙️  Configure Server"),
-            ("5", "💻 Server Console"),
-            ("6", "🗄️  World Manager"),
-            ("7", "📊 Statistics"),
-            ("8", "🌐 Tunneling"),
-            ("9", "➕ Create/Switch Server"),
-            ("0", "🚪 Exit")
-        ]
+        if ui is not None:
+            print(f"{ui.colors.BOLD}Main Menu:{ui.colors.RESET}")
+            options = [
+                ("1", "🚀 Start Server"),
+                ("2", "⏹️  Stop Server"),
+                ("3", "📦 Install/Update Server"),
+                ("4", "⚙️  Configure Server"),
+                ("5", "💻 Server Console"),
+                ("6", "🗄️  World Manager"),
+                ("7", "📊 Statistics"),
+                ("8", "🌐 Tunneling"),
+                ("9", "➕ Create/Switch Server"),
+                ("0", "🚪 Exit")
+            ]
+            
+            for key, label in options:
+                print(f" {ui.colors.BOLD}{key}.{ui.colors.RESET} {label}")
         
-        for key, label in options:
-            print(f" {ui.colors.BOLD}{key}.{ui.colors.RESET} {label}")
-        
-        choice = input(f"\n{ui.colors.YELLOW}Choose option: {ui.colors.RESET}").strip()
+        choice = input(f"\n{ui.colors.YELLOW if ui is not None else ''}Choose option: {ui.colors.RESET if ui is not None else ''}").strip()
 
         try:
-            if choice == "1":
+            if choice == "1" and server_mgr is not None:
                 server_mgr.start_server()
 
-            elif choice == "2":
+            elif choice == "2" and server_mgr is not None:
                 server_mgr.stop_server()
 
-            elif choice == "3":
+            elif choice == "3" and server_mgr is not None:
                 server_mgr.install_server_menu()
 
             elif choice == "4":
                 configure_menu()
 
-            elif choice == "5":
+            elif choice == "5" and server_mgr is not None:
                 server_mgr.show_console()
 
             elif choice == "6":
                 world_menu()
 
-            elif choice == "7":
+            elif choice == "7" and server_mgr is not None:
                 server_mgr.show_statistics()
 
             elif choice == "8":
@@ -275,15 +301,25 @@ def menu_loop():
                 graceful_shutdown()
 
             else:
-                ui.print_error("Invalid option")
+                if ui is not None:
+                    ui.print_error("Invalid option")
                 time.sleep(1)
 
         except Exception as e:
-            if logger:
+            if logger is not None:
                 logger.log('ERROR', f"Unexpected error: {e}")
             time.sleep(1)
 
 def main():
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description="Minecraft Server Manager - Unified")
+    parser.add_argument('--version', action='version', version=f'MSM {VERSION}')
+    parser.add_argument('--help', action='help', help='Show this help message and exit')
+    
+    # Parse arguments
+    args = parser.parse_args()
+    
+    # Initialize and run
     init_system()
     menu_loop()
 

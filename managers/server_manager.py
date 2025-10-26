@@ -148,8 +148,15 @@ class ServerManager:
                 
                 # Start monitoring
                 time.sleep(3)  # Give server time to start
-                # Get PID from screen session (simplified)
-                self.monitor.start_monitoring(current_server, 0)  # Will be enhanced
+                # Get PID from screen session
+                result = run_command(['screen', '-ls', screen_name], capture_output=True)
+                pid = 0
+                if result[0] == 0:  # success
+                    import re
+                    pid_match = re.search(r'(\d+)\.', result[1])
+                    if pid_match:
+                        pid = int(pid_match.group(1))
+                self.monitor.start_monitoring(current_server, pid)
                 
                 return True
             else:
