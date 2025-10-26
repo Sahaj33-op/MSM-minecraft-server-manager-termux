@@ -44,6 +44,7 @@ plugin_mgr = None  # Plugin Manager
 global_scheduler = None  # Scheduler
 
 def graceful_shutdown(signum=None, frame=None):
+    """Gracefully shutdown the application, stopping all services."""
     try:
         if server_mgr is not None:
             cur = server_mgr.get_current_server()
@@ -60,9 +61,11 @@ def graceful_shutdown(signum=None, frame=None):
     sys.exit(0)
 
 def ensure_infra():
+    """Ensure the infrastructure directories exist."""
     os.makedirs(CONFIG_DIR, exist_ok=True)
 
 def init_system():
+    """Initialize all system components including managers, database, logger, etc."""
     global logger, db, monitor, ui, server_mgr, world_mgr, tunnel_mgr, plugin_mgr, global_scheduler
 
     ensure_infra()
@@ -370,7 +373,7 @@ def show_performance_dashboard():
         input("\nPress Enter to continue...")
 
 def plugin_menu():
-    """Plugin management menu"""
+    """Plugin management menu."""
     if server_mgr is None or ui is None or plugin_mgr is None or logger is None:
         print("Error: System not initialized properly")
         input("\nPress Enter to continue...")
@@ -539,6 +542,7 @@ def scheduler_menu():
              input("\nPress Enter to continue...")
 
 def menu_loop():
+    """Main menu loop."""
     # Check dependencies before starting
     if not check_dependencies():
         sys.exit(1)
@@ -623,28 +627,38 @@ def menu_loop():
                 time.sleep(1)
 
         except APIError as e: # Catch specific errors for tailored feedback
-            ui.print_error(f"API Error: {e}")
-            logger.log('ERROR', f"API Error encountered: {e}")
+            if ui is not None:
+                ui.print_error(f"API Error: {e}")
+            if logger is not None:
+                logger.log('ERROR', f"API Error encountered: {e}")
         except DownloadError as e:
-            ui.print_error(f"Download Error: {e}")
-            logger.log('ERROR', f"Download Error encountered: {e}")
+            if ui is not None:
+                ui.print_error(f"Download Error: {e}")
+            if logger is not None:
+                logger.log('ERROR', f"Download Error encountered: {e}")
         except ConfigError as e:
-            ui.print_error(f"Configuration Error: {e}")
-            logger.log('ERROR', f"Configuration Error encountered: {e}")
+            if ui is not None:
+                ui.print_error(f"Configuration Error: {e}")
+            if logger is not None:
+                logger.log('ERROR', f"Configuration Error encountered: {e}")
         except MSMError as e: # Catch other known MSM errors
-            ui.print_error(f"Error: {e}")
-            logger.log('ERROR', f"MSM Error encountered: {e}")
+            if ui is not None:
+                ui.print_error(f"Error: {e}")
+            if logger is not None:
+                logger.log('ERROR', f"MSM Error encountered: {e}")
         except KeyboardInterrupt: # Keep handling Ctrl+C
              graceful_shutdown()
         except Exception as e: # Catch truly unexpected errors
-            logger.log('CRITICAL', f"Unhandled error in main loop: {e}", exc_info=True)
-            ui.print_error(f"An critical unexpected error occurred: {e}")
+            if logger is not None:
+                logger.log('CRITICAL', f"Unhandled error in main loop: {e}", exc_info=True)
+            if ui is not None:
+                ui.print_error(f"An critical unexpected error occurred: {e}")
 
-        # Add input pause after handling errors
-        if 'e' in locals() and isinstance(e, Exception):
-             input("\nPress Enter to continue...")
+            # Add input pause after handling errors
+            input("\nPress Enter to continue...")
 
 def main():
+    """Main entry point for the application."""
     # Set up argument parser
     parser = argparse.ArgumentParser(description="Minecraft Server Manager - Unified")
     parser.add_argument('--version', action='version', version=f'MSM {VERSION}')

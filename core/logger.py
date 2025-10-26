@@ -11,13 +11,20 @@ from pathlib import Path
 
 class EnhancedLogger:
     """Enhanced logging system with rotation and structured logging"""
+    
     def __init__(self, log_file: str, max_size: int = 50 * 1024 * 1024):
+        """Initialize the EnhancedLogger.
+        
+        Args:
+            log_file: Path to the log file
+            max_size: Maximum size of log file before rotation (default: 50MB)
+        """
         self.log_file = log_file
         self.max_size = max_size
         self._setup_logging()
 
     def _setup_logging(self):
-        """Setup comprehensive logging configuration"""
+        """Setup comprehensive logging configuration."""
         os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
         self._rotate_log_if_needed()
         
@@ -30,7 +37,7 @@ class EnhancedLogger:
         self.logger = logging.getLogger('MSM')
 
     def _rotate_log_if_needed(self):
-        """Rotate log file if it exceeds max size"""
+        """Rotate log file if it exceeds max size."""
         try:
             if os.path.exists(self.log_file) and os.path.getsize(self.log_file) > self.max_size:
                 backup_file = f"{self.log_file}.{int(time.time())}"
@@ -45,7 +52,13 @@ class EnhancedLogger:
             pass  # Fail silently for logging rotation
 
     def log(self, level: str, message: str, **kwargs):
-        """Enhanced logging with structured data and console output"""
+        """Enhanced logging with structured data and console output.
+        
+        Args:
+            level: Log level (DEBUG, INFO, SUCCESS, WARNING, ERROR, CRITICAL)
+            message: Message to log
+            **kwargs: Additional key-value pairs to include in the log
+        """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         color_map = {
             'DEBUG': '\033[2m', 'INFO': '\033[94m', 'SUCCESS': '\033[92m',

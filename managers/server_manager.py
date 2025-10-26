@@ -49,28 +49,58 @@ class ServerManager:
     ]
     
     def __init__(self, db_manager: DatabaseManager, logger, monitor: PerformanceMonitor):
+        """Initialize the ServerManager with required dependencies.
+        
+        Args:
+            db_manager: Database manager instance for storing server data
+            logger: Logger instance for logging messages
+            monitor: Performance monitor instance for tracking server metrics
+        """
         self.db = db_manager
         self.logger = logger
         self.monitor = monitor
         self.ui = UI()
         self.current_session_id = None
+        
+        # Set the logger for all API clients
+        from managers.api_client import BaseAPI
+        BaseAPI.set_logger(logger)
     
     def list_servers(self) -> List[str]:
-        """List all configured servers"""
+        """List all configured servers.
+        
+        Returns:
+            List of server names
+        """
         config = ConfigManager.load()
         return list(config.get('servers', {}).keys())
     
     def get_current_server(self) -> Optional[str]:
-        """Get currently selected server"""
+        """Get currently selected server.
+        
+        Returns:
+            Name of the current server or None if no server is selected
+        """
         return ConfigManager.get_current_server()
     
     def set_current_server(self, name: str):
-        """Set current server"""
+        """Set current server.
+        
+        Args:
+            name: Name of the server to set as current
+        """
         ConfigManager.set_current_server(name)
         self.logger.log('INFO', f'Switched to server: {name}')
     
     def create_server(self, name: str) -> bool:
-        """Create new server configuration"""
+        """Create new server configuration.
+        
+        Args:
+            name: Name of the server to create
+            
+        Returns:
+            True if server was created successfully, False otherwise
+        """
         safe_name = sanitize_input(name)
         server_dir = get_server_directory(safe_name)
         
@@ -119,7 +149,11 @@ class ServerManager:
             return False
     
     def start_server(self) -> bool:
-        """Start the current server with monitoring"""
+        """Start the current server with monitoring.
+        
+        Returns:
+            True if server was started successfully, False otherwise
+        """
         current_server = self.get_current_server()
         if not current_server:
             self.logger.log('ERROR', 'No server selected')
@@ -248,7 +282,12 @@ class ServerManager:
             return False
     
     def _update_server_properties(self, server_name: str, settings: dict):
-        """Update server.properties file with given settings"""
+        """Update server.properties file with given settings.
+        
+        Args:
+            server_name: Name of the server
+            settings: Dictionary of settings to update
+        """
         server_dir = get_server_directory(server_name)
         properties_file = server_dir / 'server.properties'
         
@@ -275,7 +314,11 @@ class ServerManager:
                     f.write(f'{key}={value}\n')
     
     def stop_server(self) -> bool:
-        """Stop the current server gracefully"""
+        """Stop the current server gracefully.
+        
+        Returns:
+            True if server was stopped successfully, False otherwise
+        """
         current_server = self.get_current_server()
         if not current_server:
             self.logger.log('ERROR', 'No server selected')

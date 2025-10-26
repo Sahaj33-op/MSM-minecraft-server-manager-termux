@@ -11,12 +11,18 @@ from typing import Dict, Any
 
 class DatabaseManager:
     """Enhanced database management for server statistics and history"""
+    
     def __init__(self, db_path: str):
+        """Initialize the DatabaseManager.
+        
+        Args:
+            db_path: Path to the SQLite database file
+        """
         self.db_path = db_path
         self._init_database()
 
     def _init_database(self):
-        """Initialize database with comprehensive schema"""
+        """Initialize database with comprehensive schema."""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         with self.get_connection() as conn:
             conn.executescript('''
@@ -49,7 +55,11 @@ class DatabaseManager:
 
     @contextmanager
     def get_connection(self):
-        """Context manager for database connections"""
+        """Context manager for database connections.
+        
+        Yields:
+            SQLite connection object
+        """
         conn = None
         try:
             conn = sqlite3.connect(self.db_path)
@@ -60,7 +70,16 @@ class DatabaseManager:
                 conn.close()
 
     def log_session_start(self, server_name: str, flavor: str, version: str) -> int:
-        """Log server session start"""
+        """Log server session start.
+        
+        Args:
+            server_name: Name of the server
+            flavor: Server flavor (paper, purpur, etc.)
+            version: Server version
+            
+        Returns:
+            ID of the created session
+        """
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -68,10 +87,14 @@ class DatabaseManager:
                 (server_name, flavor, version, datetime.now())
             )
             conn.commit()
-            return cursor.lastrowid
+            return cursor.lastrowid if cursor.lastrowid is not None else 0
 
     def log_session_end(self, session_id: int):
-        """Log server session end with statistics"""
+        """Log server session end with statistics.
+        
+        Args:
+            session_id: ID of the session to end
+        """
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT start_time FROM server_sessions WHERE id = ?", (session_id,))
@@ -88,7 +111,14 @@ class DatabaseManager:
                 conn.commit()
 
     def log_performance_metric(self, server_name: str, ram_usage: float, cpu_usage: float, player_count: int = 0):
-        """Log performance metrics"""
+        """Log performance metrics.
+        
+        Args:
+            server_name: Name of the server
+            ram_usage: RAM usage percentage
+            cpu_usage: CPU usage percentage
+            player_count: Number of players (default: 0)
+        """
         with self.get_connection() as conn:
             conn.execute(
                 "INSERT INTO performance_metrics (server_name, timestamp, ram_usage, cpu_usage, player_count) VALUES (?, ?, ?, ?, ?)",
@@ -97,7 +127,14 @@ class DatabaseManager:
             conn.commit()
 
     def get_server_statistics(self, server_name: str) -> Dict[str, Any]:
-        """Get comprehensive server statistics"""
+        """Get comprehensive server statistics.
+        
+        Args:
+            server_name: Name of the server
+            
+        Returns:
+            Dictionary containing server statistics
+        """
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(

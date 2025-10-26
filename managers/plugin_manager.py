@@ -18,23 +18,48 @@ class PluginManager:
     """Manages plugins for Bukkit/Spigot/Paper servers."""
     
     def __init__(self, logger=None, ui=None):
+        """Initialize the PluginManager.
+        
+        Args:
+            logger: Logger instance for logging messages
+            ui: UI instance for displaying messages
+        """
         self.logger = logger
         self.ui = ui
 
     def _log(self, level: str, message: str):
+        """Log a message using the logger or print to console.
+        
+        Args:
+            level: Log level (INFO, ERROR, WARNING, etc.)
+            message: Message to log
+        """
         if self.logger:
             self.logger.log(level, message)
         else:
             print(f"[{level}] {message}")
 
     def _print_ui(self, method: str, message: str):
+        """Print a message using the UI or print to console.
+        
+        Args:
+            method: UI method to call (print_info, print_error, etc.)
+            message: Message to print
+        """
         if self.ui and hasattr(self.ui, method):
              getattr(self.ui, method)(message)
         else:
             print(message)
 
     def _get_plugins_dir(self, server_name: str) -> Optional[Path]:
-        """Gets the plugins directory path for a server."""
+        """Gets the plugins directory path for a server.
+        
+        Args:
+            server_name: Name of the server
+            
+        Returns:
+            Path to the plugins directory or None if not supported
+        """
         server_path = get_server_directory(server_name)
         # Check if server is Java-based (simple check for now)
         server_config = self._load_server_config(server_name) # Helper needed
@@ -49,7 +74,14 @@ class PluginManager:
              return None
 
     def _load_server_config(self, server_name: str) -> dict:
-        """Helper to load server config (needs ConfigManager)."""
+        """Helper to load server config (needs ConfigManager).
+        
+        Args:
+            server_name: Name of the server
+            
+        Returns:
+            Dictionary containing server configuration
+        """
         # In a real scenario, this would import and use ConfigManager
         # For now, a placeholder:
         try:
@@ -60,7 +92,14 @@ class PluginManager:
              return {} # Return empty dict on failure
 
     def list_plugins(self, server_name: str) -> List[Tuple[str, bool]]:
-        """List plugins and their status (enabled/disabled)."""
+        """List plugins and their status (enabled/disabled).
+        
+        Args:
+            server_name: Name of the server
+            
+        Returns:
+            List of tuples containing (plugin_name, is_enabled)
+        """
         plugins_dir = self._get_plugins_dir(server_name)
         if not plugins_dir:
             return []
@@ -82,12 +121,21 @@ class PluginManager:
             return []
 
     def install_plugin(self, server_name: str, source: str) -> bool:
-        """Install a plugin from a URL or local path."""
+        """Install a plugin from a URL or local path.
+        
+        Args:
+            server_name: Name of the server
+            source: URL or local path to the plugin .jar file
+            
+        Returns:
+            True if plugin was installed successfully, False otherwise
+        """
         plugins_dir = self._get_plugins_dir(server_name)
         if not plugins_dir:
             return False
 
         source_path = Path(source)
+        filename = "plugin.jar"  # Default filename
         
         try:
             if source_path.is_file() and source_path.suffix == '.jar':
@@ -113,8 +161,11 @@ class PluginManager:
                     percent = min(100, (downloaded * 100) // total_size if total_size > 0 else 0)
                     print(f'\rDownloading: {percent}%', end='', flush=True)
 
+                # Use urlopen instead of urlretrieve for better control
                 req = urllib.request.Request(source, headers={'User-Agent': 'MSM-Plugin-Manager'})
-                urllib.request.urlretrieve(req, target_path, reporthook=progress_hook)
+                with urllib.request.urlopen(req, timeout=30) as response:
+                    with open(target_path, 'wb') as f:
+                        shutil.copyfileobj(response, f)
                 print() # New line after progress
                 
                 if not target_path.exists() or target_path.stat().st_size == 0:
@@ -130,14 +181,22 @@ class PluginManager:
             self._log('ERROR', f"Failed to install plugin from {source}: {e}")
             self._print_ui('print_error', f"Failed to install plugin: {e}")
             # Clean up potentially incomplete download
-            target_path = plugins_dir / (filename if 'filename' in locals() else 'plugin.jar')
+            target_path = plugins_dir / filename
             if target_path.exists():
                  try: target_path.unlink()
                  except OSError: pass
             return False
 
     def _find_plugin_file(self, plugins_dir: Path, plugin_name: str) -> Optional[Path]:
-        """Finds the .jar or .jar.disabled file for a plugin name."""
+        """Finds the .jar or .jar.disabled file for a plugin name.
+        
+        Args:
+            plugins_dir: Path to the plugins directory
+            plugin_name: Name of the plugin to find
+            
+        Returns:
+            Path to the plugin file or None if not found
+        """
         # Exact match first
         jar_file = plugins_dir / f"{plugin_name}.jar"
         disabled_file = plugins_dir / f"{plugin_name}.jar.disabled"
@@ -161,7 +220,15 @@ class PluginManager:
         return None # Not found
 
     def enable_plugin(self, server_name: str, plugin_name: str) -> bool:
-        """Enable a disabled plugin by renaming."""
+        """Enable a disabled plugin by renaming.
+        
+        Args:
+            server_name: Name of the server
+            plugin_name: Name of the plugin to enable
+            
+        Returns:
+            True if plugin was enabled successfully, False otherwise
+        """
         plugins_dir = self._get_plugins_dir(server_name)
         if not plugins_dir:
             return False
@@ -193,9 +260,16 @@ class PluginManager:
              self._print_ui('print_error', "Found unexpected file type for plugin.")
              return False
 
-
     def disable_plugin(self, server_name: str, plugin_name: str) -> bool:
-        """Disable an enabled plugin by renaming."""
+        """Disable an enabled plugin by renaming.
+        
+        Args:
+            server_name: Name of the server
+            plugin_name: Name of the plugin to disable
+            
+        Returns:
+            True if plugin was disabled successfully, False otherwise
+        """
         plugins_dir = self._get_plugins_dir(server_name)
         if not plugins_dir:
             return False
@@ -206,14 +280,14 @@ class PluginManager:
             self._log('ERROR', f"Plugin '{plugin_name}' not found in {server_name}.")
             self._print_ui('print_error', f"Plugin '{plugin_name}' not found.")
             return False
-
+            
         if plugin_file.suffixes == ['.jar', '.disabled']:
              self._print_ui('print_info', f"Plugin '{plugin_name}' is already disabled.")
              return True # Already disabled
 
         if plugin_file.suffix == '.jar':
             try:
-                disabled_path = plugins_dir / f"{plugin_file.name}.disabled"
+                disabled_path = plugins_dir / f"{plugin_name}.jar.disabled"
                 plugin_file.rename(disabled_path)
                 self._log('SUCCESS', f"Disabled plugin '{plugin_name}' for {server_name}.")
                 self._print_ui('print_success', f"Plugin '{plugin_name}' disabled.")
@@ -226,31 +300,34 @@ class PluginManager:
              self._log('ERROR', f"Unexpected file type found for plugin '{plugin_name}': {plugin_file.name}")
              self._print_ui('print_error', "Found unexpected file type for plugin.")
              return False
-             
+
     def delete_plugin(self, server_name: str, plugin_name: str) -> bool:
-         """Deletes a plugin file (.jar or .jar.disabled)."""
-         plugins_dir = self._get_plugins_dir(server_name)
-         if not plugins_dir:
-              return False
+        """Delete a plugin.
+        
+        Args:
+            server_name: Name of the server
+            plugin_name: Name of the plugin to delete
+            
+        Returns:
+            True if plugin was deleted successfully, False otherwise
+        """
+        plugins_dir = self._get_plugins_dir(server_name)
+        if not plugins_dir:
+            return False
 
-         plugin_file = self._find_plugin_file(plugins_dir, plugin_name)
+        plugin_file = self._find_plugin_file(plugins_dir, plugin_name)
 
-         if not plugin_file:
-              self._log('ERROR', f"Plugin '{plugin_name}' not found for deletion in {server_name}.")
-              self._print_ui('print_error', f"Plugin '{plugin_name}' not found.")
-              return False
-              
-         try:
-              confirm = input(f"{self.ui.colors.YELLOW if self.ui else ''}Permanently delete '{plugin_file.name}'? (y/N): {self.ui.colors.RESET if self.ui else ''}").strip().lower()
-              if confirm == 'y':
-                   plugin_file.unlink()
-                   self._log('SUCCESS', f"Deleted plugin '{plugin_file.name}' from {server_name}.")
-                   self._print_ui('print_success', f"Plugin '{plugin_file.name}' deleted.")
-                   return True
-              else:
-                   self._print_ui('print_info', 'Deletion cancelled.')
-                   return False
-         except Exception as e:
-              self._log('ERROR', f"Failed to delete plugin '{plugin_name}': {e}")
-              self._print_ui('print_error', f"Failed to delete plugin: {e}")
-              return False
+        if not plugin_file:
+            self._log('ERROR', f"Plugin '{plugin_name}' not found in {server_name}.")
+            self._print_ui('print_error', f"Plugin '{plugin_name}' not found.")
+            return False
+
+        try:
+            plugin_file.unlink()
+            self._log('SUCCESS', f"Deleted plugin '{plugin_name}' from {server_name}.")
+            self._print_ui('print_success', f"Plugin '{plugin_name}' deleted.")
+            return True
+        except Exception as e:
+            self._log('ERROR', f"Failed to delete plugin '{plugin_name}': {e}")
+            self._print_ui('print_error', f"Failed to delete plugin: {e}")
+            return False

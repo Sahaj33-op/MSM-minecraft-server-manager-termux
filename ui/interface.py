@@ -34,12 +34,17 @@ class UI:
     
     @staticmethod
     def clear_screen():
-        """Clear terminal screen"""
+        """Clear terminal screen."""
         os.system('cls' if os.name == 'nt' else 'clear')
     
     @staticmethod
     def print_header(version="2.0", system_info=None):
-        """Print enhanced header with system info"""
+        """Print enhanced header with system info.
+        
+        Args:
+            version: Version string to display
+            system_info: Dictionary containing system information
+        """
         UI.clear_screen()
         print(f"{UI.colors.BOLD}{UI.colors.CYAN}{'=' * 80}{UI.colors.RESET}")
         print(f"{UI.colors.BOLD}{UI.colors.CYAN}{'':>25} Enhanced Minecraft Server Manager v{version} {'':>25}{UI.colors.RESET}")
@@ -53,45 +58,91 @@ class UI:
     
     @staticmethod
     def print_menu_options(options):
-        """Print menu options in a formatted way"""
+        """Print menu options in a formatted way.
+        
+        Args:
+            options: List of tuples containing (key, label) for menu options
+        """
         for key, label in options:
             print(f" {UI.colors.BOLD}{key}.{UI.colors.RESET} {label}")
     
     @staticmethod
     def print_info(message: str):
-        """Print info message"""
+        """Print info message.
+        
+        Args:
+            message: Message to print
+        """
         print(f"{UI.colors.INFO}[INFO]{UI.colors.RESET} {message}")
     
     @staticmethod
     def print_success(message: str):
-        """Print success message"""
+        """Print success message.
+        
+        Args:
+            message: Message to print
+        """
         print(f"{UI.colors.SUCCESS}[SUCCESS]{UI.colors.RESET} {message}")
     
     @staticmethod
     def print_warning(message: str):
-        """Print warning message"""
+        """Print warning message.
+        
+        Args:
+            message: Message to print
+        """
         print(f"{UI.colors.WARNING}[WARNING]{UI.colors.RESET} {message}")
     
     @staticmethod
     def print_error(message: str):
-        """Print error message"""
+        """Print error message.
+        
+        Args:
+            message: Message to print
+        """
         print(f"{UI.colors.ERROR}[ERROR]{UI.colors.RESET} {message}")
 
 # Legacy functions for compatibility
 def clear_screen():
+    """Clear terminal screen (legacy function)."""
     UI.clear_screen()
 
 def print_header(version="2.0"):
+    """Print enhanced header with system info (legacy function).
+    
+    Args:
+        version: Version string to display
+    """
     UI.print_header(version)
 
 def print_info(message: str):
+    """Print info message (legacy function).
+    
+    Args:
+        message: Message to print
+    """
     UI.print_info(message)
 
 def print_success(message: str):
+    """Print success message (legacy function).
+    
+    Args:
+        message: Message to print
+    """
     UI.print_success(message)
 
 def print_warning(message: str):
+    """Print warning message (legacy function).
+    
+    Args:
+        message: Message to print
+    """
     UI.print_warning(message)
 
 def print_error(message: str):
+    """Print error message (legacy function).
+    
+    Args:
+        message: Message to print
+    """
     UI.print_error(message)

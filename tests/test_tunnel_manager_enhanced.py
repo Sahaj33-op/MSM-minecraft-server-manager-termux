@@ -84,62 +84,74 @@ class TestEnhancedTunnelManager(unittest.TestCase):
         result = self.tunnel_mgr.start_pinggy(25565)
         self.assertFalse(result)
 
+    @patch('shutil.which')
     @patch('managers.tunnel_manager.subprocess.Popen')
-    @patch('managers.tunnel_manager.TunnelManager._save_config')
-    @patch('managers.tunnel_manager.TunnelManager._load_config')
-    @patch('managers.tunnel_manager.TunnelManager._get_msm_server_port', return_value=25565) # Mock port detection
-    @patch('pathlib.Path.exists', return_value=False) # Assume no tunnel running initially
-    def test_start_tunnel_playit(self, mock_exists, mock_get_port, mock_load_config, mock_save_config, mock_popen):
-        """Test starting the playit.gg tunnel."""
-        mock_load_config.return_value = {'service': 'playit', 'state': 'STOPPED'} # Mock initial state
+    def test_start_ngrok_success(self, mock_popen, mock_which):
+        """Test successful ngrok start"""
+        mock_which.return_value = '/usr/bin/ngrok'
         mock_process = MagicMock(spec=subprocess.Popen)
         mock_process.pid = 12345
         mock_popen.return_value = mock_process
 
         # --- Execute ---
-        # self.tunnel_mgr.start_tunnel()  # Commented out since this method doesn't exist
-
-        # Since start_tunnel doesn't exist, we'll test the individual methods
-        pass
-
-    @patch('managers.tunnel_manager.os.killpg')
-    @patch('managers.tunnel_manager.psutil.pid_exists')
-    @patch('managers.tunnel_manager.TunnelManager._save_tunnel_state')
-    @patch('pathlib.Path.unlink') # Mock PID file removal
-    def test_stop_tunnel(self, mock_unlink, mock_save_state, mock_pid_exists, mock_killpg):
-        """Test stopping a running tunnel."""
-        pid = 12345
-        # Create a mock process
-        mock_proc = MagicMock()
-        mock_proc.poll.return_value = None  # Process is running
-        self.tunnel_mgr.tunnel_processes['playit'] = mock_proc
-        self.tunnel_mgr.tunnel_info['playit'] = {'service': 'playit', 'state': 'RUNNING', 'pid': pid}
-        mock_pid_exists.return_value = True # Process exists
-
-        # --- Execute ---
-        result = self.tunnel_mgr.stop_tunnel('playit')
+        result = self.tunnel_mgr.start_ngrok(25565)
 
         # --- Assert ---
         self.assertTrue(result)
-        mock_pid_exists.assert_called_once_with(pid)
-        # Check if terminate was called on the process
-        mock_proc.terminate.assert_called_once()
-        mock_save_state.assert_called()
-        # Check that tunnel info was cleared
-        self.assertNotIn('playit', self.tunnel_mgr.tunnel_info)
+        mock_popen.assert_called_once_with(
+            ["ngrok", "tcp", "25565"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        self.assertIn('ngrok', self.tunnel_mgr.tunnel_processes)
+        self.assertEqual(self.tunnel_mgr.tunnel_processes['ngrok'], mock_process)
 
+    @patch('managers.tunnel_manager.psutil.pid_exists')
     @patch('managers.tunnel_manager.TunnelManager._save_tunnel_state')
-    def test_extract_and_save_url_playit_tcp(self, mock_save_state):
-        """Test extracting playit.gg TCP URL from output."""
-        # Setup initial config state (doesn't matter much here)
-        self.tunnel_mgr.tunnel_info = {'playit': {'service': 'playit', 'state': 'RUNNING', 'pid': 123}}
+    def test_stop_tunnel_success(self, mock_save_state, mock_pid_exists):
+        """Test successful tunnel stop"""
+        # Create a mock process
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None  # Process is running
+        mock_proc.terminate = MagicMock()
+        mock_proc.wait = MagicMock()
         
-        # Simulate log line
-        log_line = "INFO configuration	address=tcp://neat-slug-1234.a.playit.gg:54321 proto=tcp"
+        self.tunnel_mgr.tunnel_processes['ngrok'] = mock_proc
+        self.tunnel_mgr.tunnel_info['ngrok'] = {'port': 25565, 'url': 'http://example.com'}
+        
+        mock_pid_exists.return_value = True  # Process exists
 
         # --- Execute ---
-        # Since _extract_and_save_url doesn't exist, we'll skip this test
-        pass
+        result = self.tunnel_mgr.stop_tunnel('ngrok')
+
+        # --- Assert ---
+        self.assertTrue(result)
+        mock_proc.terminate.assert_called_once()
+        mock_proc.wait.assert_called_once()
+        mock_save_state.assert_called()
+        # Check that tunnel info was cleared
+        self.assertNotIn('ngrok', self.tunnel_mgr.tunnel_processes)
+        self.assertNotIn('ngrok', self.tunnel_mgr.tunnel_info)
+
+    @patch('managers.tunnel_manager.TunnelManager._save_tunnel_state')
+    def test_extract_ngrok_url(self, mock_save_state):
+        """Test extracting ngrok URL from output"""
+        # Setup initial tunnel info
+        self.tunnel_mgr.tunnel_info = {'ngrok': {'port': 25565, 'url': 'Extracting...'}}
+        
+        # Create a mock process
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None  # Process is running
+        mock_proc.stdout.readline.return_value = b'https://abcd1234.ngrok.io\n'
+        
+        # --- Execute ---
+        self.tunnel_mgr._extract_ngrok_url(mock_proc, 'ngrok')
+        
+        # --- Assert ---
+        # Check that the URL was extracted and saved
+        self.assertIn('ngrok', self.tunnel_mgr.tunnel_info)
+        self.assertIn('url', self.tunnel_mgr.tunnel_info['ngrok'])
+        self.assertTrue(self.tunnel_mgr.tunnel_info['ngrok']['url'].endswith('.ngrok.io'))
 
 if __name__ == '__main__':
     unittest.main()

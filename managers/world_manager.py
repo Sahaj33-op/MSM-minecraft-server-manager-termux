@@ -16,23 +16,48 @@ class WorldManager:
     """Manages world backups and restoration with verification and rotation."""
     
     def __init__(self, logger=None):
+        """Initialize the WorldManager.
+        
+        Args:
+            logger: Logger instance for logging messages
+        """
         self.logger = logger
     
     def _log(self, level: str, message: str):
-        """Log message if logger available"""
+        """Log message if logger available.
+        
+        Args:
+            level: Log level (INFO, ERROR, WARNING, etc.)
+            message: Message to log
+        """
         if self.logger:
             self.logger.log(level, message)
         else:
             print(f"[{level}] {message}")
             
     def _get_backup_dir(self, server_path: Path) -> Path:
-        """Gets the backup directory path."""
+        """Gets the backup directory path.
+        
+        Args:
+            server_path: Path to the server directory
+            
+        Returns:
+            Path to the backup directory
+        """
         backup_dir = server_path / "backups"
         backup_dir.mkdir(exist_ok=True)
         return backup_dir
 
     def create_backup(self, server_name: str, server_path: Path) -> bool:
-        """Create a world backup with ZIP compression and verification."""
+        """Create a world backup with ZIP compression and verification.
+        
+        Args:
+            server_name: Name of the server
+            server_path: Path to the server directory
+            
+        Returns:
+            True if backup was created successfully, False otherwise
+        """
         backup_dir = self._get_backup_dir(server_path)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         backup_name = f"world_backup_{timestamp}.zip"
@@ -95,7 +120,14 @@ class WorldManager:
             return False # Indicate failure
     
     def list_backups(self, server_path: Path) -> List[Path]:
-        """List all available backup files, sorted newest first."""
+        """List all available backup files, sorted newest first.
+        
+        Args:
+            server_path: Path to the server directory
+            
+        Returns:
+            List of Path objects for backup files
+        """
         backup_dir = self._get_backup_dir(server_path)
         if not backup_dir.exists():
             return []
@@ -106,7 +138,16 @@ class WorldManager:
         return backups # Return list of Path objects
     
     def restore_backup(self, server_name: str, server_path: Path, backup_path: Path) -> bool:
-        """Restore world from a specific backup Path object."""
+        """Restore world from a specific backup Path object.
+        
+        Args:
+            server_name: Name of the server
+            server_path: Path to the server directory
+            backup_path: Path to the backup file
+            
+        Returns:
+            True if backup was restored successfully, False otherwise
+        """
         try:
             if not backup_path.exists():
                 self._log('ERROR', f'Backup file not found: {backup_path.name}')
@@ -151,7 +192,15 @@ class WorldManager:
             return False
             
     def delete_backup(self, server_path: Path, backup_path: Path) -> bool:
-        """Delete a specific backup Path object."""
+        """Delete a specific backup Path object.
+        
+        Args:
+            server_path: Path to the server directory
+            backup_path: Path to the backup file
+            
+        Returns:
+            True if backup was deleted successfully, False otherwise
+        """
         try:
             if backup_path.exists():
                 backup_path.unlink()
@@ -165,7 +214,12 @@ class WorldManager:
             return False
 
     def rotate_backups(self, server_path: Path, keep_count: int = 7):
-        """Delete oldest backups, keeping only the specified number."""
+        """Delete oldest backups, keeping only the specified number.
+        
+        Args:
+            server_path: Path to the server directory
+            keep_count: Number of backups to keep (default: 7)
+        """
         self._log('INFO', f'Applying backup rotation (keeping last {keep_count})...')
         backups = self.list_backups(server_path) # Already sorted newest first
         
@@ -182,7 +236,14 @@ class WorldManager:
              self._log('INFO', 'No old backups to delete.')
 
     def get_backup_info(self, backup_path: Path) -> dict:
-        """Get information about a backup Path object."""
+        """Get information about a backup Path object.
+        
+        Args:
+            backup_path: Path to the backup file
+            
+        Returns:
+            Dictionary containing backup information
+        """
         if not backup_path.exists():
             return {}
         
