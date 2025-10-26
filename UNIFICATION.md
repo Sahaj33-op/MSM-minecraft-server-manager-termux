@@ -1,22 +1,90 @@
-# MSM Unified Merge Plan
+# MSM Unification Project
 
-This branch will unify `main` and `main-v1.1.0` into a single modular codebase with enterprise features.
+This document outlines the unification of the Minecraft Server Manager (MSM) project, combining features from multiple branches into a single, cohesive architecture.
 
-Steps:
-1. Keep `main` as base (Termux-native, SQLite, monitoring, logging).
-2. Gradually modularize `msm.py` into packages: core/, managers/, flavors/, ui/, utils/.
-3. Port v1.1.0 modules (api_client.py, server_manager.py, world_manager.py, tunnel_manager.py, environment.py, ui.py) into managers/ and core/ while integrating DB/logging/monitoring.
-4. Bring back tunneling integrations from v1.1.0.
-5. Preserve tests from v1.1.0 and add tests for DB/monitoring.
+## Goals
 
-Tracking checklist:
-- [ ] Create package skeleton
-- [ ] Extract core: database.py, logger.py, monitoring.py
-- [ ] Move config handling to core/config.py
-- [ ] Move UI into ui/
-- [ ] Port v1.1.0 managers (server/world/tunnel)
-- [ ] Extract flavor logic into flavors/
-- [ ] Replace direct calls in msm.py with imports
-- [ ] Restore tunneling (playit, ngrok, cloudflared, pinggy)
-- [ ] Add tests/ from v1.1.0
-- [ ] Update README for unified structure
+1. **Modular Architecture**: Separate concerns into distinct modules for better maintainability
+2. **Unified Codebase**: Combine features from different branches into a single implementation
+3. **Enhanced Functionality**: Add missing features and improve existing ones
+4. **Improved Testing**: Implement comprehensive test coverage
+5. **Better Documentation**: Update documentation to reflect the new architecture
+
+## Key Changes
+
+### 1. Fixed Import Issues
+- Fixed missing `time` import in [utils/helpers.py](file:///f:/Sahaj/Python/Minecraft%20Server%20Manager/MSM-minecraft-server-manager-termux/utils/helpers.py)
+- Updated [main.py](file:///f:/Sahaj/Python/Minecraft%20Server%20Manager/MSM-minecraft-server-manager-termux/main.py) with correct imports and structure
+
+### 2. Enhanced Requirements
+- Updated [requirements.txt](file:///f:/Sahaj/Python/Minecraft%20Server%20Manager/MSM-minecraft-server-manager-termux/requirements.txt) with version specifications for dependencies
+
+### 3. Completed Server Installation Logic
+- Integrated version selection and download logic from API clients into ServerManager
+- Enhanced installation menu with better user experience
+
+### 4. Improved TunnelManager
+- Added tunnel status checking
+- Implemented process management
+- Added URL extraction from tunnel output
+- Implemented state persistence
+
+### 5. Added Comprehensive Testing
+- Ported existing test suite
+- Added new tests for TunnelManager functionality
+
+### 6. Updated Documentation
+- Completely revised [README.md](file:///f:/Sahaj/Python/Minecraft%20Server%20Manager/MSM-minecraft-server-manager-termux/README.md) for unified architecture
+- Created this UNIFICATION.md document
+
+## Architecture Overview
+
+### Core Components
+- **Logger**: Enhanced logging with rotation and multiple levels
+- **Database**: SQLite database management for statistics and tracking
+- **Monitoring**: Real-time performance monitoring with threading
+- **Config**: Configuration management for servers and global settings
+
+### Managers
+- **Server Manager**: Handles server lifecycle (start, stop, install)
+- **World Manager**: Manages world backups and restoration
+- **Tunnel Manager**: Handles tunneling services (ngrok, cloudflared, etc.)
+- **API Client**: Interfaces with various Minecraft server APIs
+
+### Utilities
+- **Helpers**: Common utility functions
+- **UI**: User interface components with color support
+- **Environment**: Environment detection and management
+
+## Future Enhancements
+
+### High Priority
+1. Enhance Configuration - Restore full configuration menu with all server.properties settings
+2. Add CLI Mode - Restore CLI argument parsing for automation/scripting use cases
+3. Performance Dashboard - Add a live monitoring dashboard showing real-time server metrics
+
+### Medium Priority
+1. Enhanced World Management - Add more advanced world management features
+2. Plugin Management - Add support for plugin installation and management
+3. Scheduled Tasks - Implement scheduled server restarts and backups
+
+### Low Priority
+1. Web Interface - Add a web-based management interface
+2. Mobile App - Create a companion mobile app for server management
+3. Multi-Language Support - Add internationalization support
+
+## Testing
+
+The unified MSM includes comprehensive unit tests to ensure functionality:
+
+```bash
+# Run server manager tests
+python -m tests.test_server_manager
+
+# Run tunnel manager tests
+python -m tests.test_tunnel_manager
+```
+
+## Conclusion
+
+The unification of MSM has successfully combined the best features from different branches into a single, maintainable codebase. The modular architecture makes it easier to extend and maintain, while the enhanced functionality provides a better user experience.

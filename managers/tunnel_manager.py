@@ -4,34 +4,139 @@ Tunneling Manager (unified):
 - No proot required: ngrok, cloudflared, pinggy
 - Optional proot required: playit.gg
 """
-import shutil, subprocess, os
+import shutil
+import subprocess
+import os
+import json
+import time
+import psutil
+from pathlib import Path
 from environment import EnvironmentManager
 
 class TunnelManager:
     def __init__(self, logger=None):
         self.logger = logger
+        self.tunnel_processes = {}  # Track tunnel processes
+        self.tunnel_info = {}       # Store tunnel information
+        self.config_dir = Path(os.path.expanduser("~/.config/msm"))
+        self.tunnel_state_file = self.config_dir / "tunnel_state.json"
+        self._load_tunnel_state()
 
     def _log(self, level, msg):
-        if self.logger: self.logger.log(level, msg)
-        else: print(f"[{level}] {msg}")
+        if self.logger: 
+            self.logger.log(level, msg)
+        else: 
+            print(f"[{level}] {msg}")
+
+    def _save_tunnel_state(self):
+        """Save tunnel state to file"""
+        try:
+            self.config_dir.mkdir(parents=True, exist_ok=True)
+            state = {
+                'processes': {name: {'pid': proc.pid if proc.poll() is None else None} 
+                             for name, proc in self.tunnel_processes.items()},
+                'info': self.tunnel_info
+            }
+            self.tunnel_state_file.write_text(json.dumps(state, indent=2))
+        except Exception as e:
+            self._log('DEBUG', f'Failed to save tunnel state: {e}')
+
+    def _load_tunnel_state(self):
+        """Load tunnel state from file"""
+        try:
+            if self.tunnel_state_file.exists():
+                state = json.loads(self.tunnel_state_file.read_text())
+                self.tunnel_info = state.get('info', {})
+                # We can't restore processes directly, but we can restore info
+        except Exception as e:
+            self._log('DEBUG', f'Failed to load tunnel state: {e}')
+
+    def _update_tunnel_info(self, tunnel_name, info):
+        """Update tunnel information"""
+        self.tunnel_info[tunnel_name] = info
+        self._save_tunnel_state()
+
+    def get_tunnel_status(self, tunnel_name):
+        """Get status of a tunnel"""
+        if tunnel_name in self.tunnel_processes:
+            proc = self.tunnel_processes[tunnel_name]
+            if proc.poll() is None:  # Still running
+                return "RUNNING"
+            else:
+                # Process finished
+                del self.tunnel_processes[tunnel_name]
+                return "STOPPED"
+        return "NOT_STARTED"
+
+    def stop_tunnel(self, tunnel_name):
+        """Stop a running tunnel"""
+        if tunnel_name in self.tunnel_processes:
+            try:
+                proc = self.tunnel_processes[tunnel_name]
+                # Try graceful termination first
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    # Force kill if needed
+                    proc.kill()
+                    proc.wait()
+                del self.tunnel_processes[tunnel_name]
+                if tunnel_name in self.tunnel_info:
+                    del self.tunnel_info[tunnel_name]
+                self._save_tunnel_state()
+                self._log('SUCCESS', f'{tunnel_name} tunnel stopped')
+                return True
+            except Exception as e:
+                self._log('ERROR', f'Failed to stop {tunnel_name} tunnel: {e}')
+                return False
+        return False
+
+    def get_tunnel_url(self, tunnel_name):
+        """Get tunnel URL if available"""
+        return self.tunnel_info.get(tunnel_name, {}).get('url', 'Not available')
+
+    def list_tunnels(self):
+        """List all tunnels and their status"""
+        tunnels = {}
+        for name in ['ngrok', 'cloudflared', 'pinggy', 'playit']:
+            tunnels[name] = {
+                'status': self.get_tunnel_status(name),
+                'url': self.get_tunnel_url(name)
+            }
+        return tunnels
 
     def start_ngrok(self, port):
         if not shutil.which('ngrok'):
             self._log('ERROR', 'ngrok not found. Install from ngrok.com and add to PATH.')
             return False
         cmd = ["ngrok", "tcp", str(port)]
-        subprocess.Popen(cmd)
-        self._log('SUCCESS', f'ngrok started for tcp {port}.')
-        return True
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.tunnel_processes['ngrok'] = proc
+            self._update_tunnel_info('ngrok', {'port': port, 'started_at': time.time()})
+            self._save_tunnel_state()
+            self._log('SUCCESS', f'ngrok started for tcp {port}.')
+            return True
+        except Exception as e:
+            self._log('ERROR', f'Failed to start ngrok: {e}')
+            return False
 
     def start_cloudflared(self, port):
         if not shutil.which('cloudflared'):
             self._log('ERROR', 'cloudflared not found. Install: pkg install cloudflared')
             return False
         cmd = ["cloudflared", "tunnel", "--url", f"tcp://localhost:{port}"]
-        subprocess.Popen(cmd)
-        self._log('SUCCESS', f'cloudflared started for tcp {port}.')
-        return True
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.tunnel_processes['cloudflared'] = proc
+            self._update_tunnel_info('cloudflared', {'port': port, 'started_at': time.time()})
+            self._save_tunnel_state()
+            self._log('SUCCESS', f'cloudflared started for tcp {port}.')
+            return True
+        except Exception as e:
+            self._log('ERROR', f'Failed to start cloudflared: {e}')
+            return False
 
     def start_pinggy(self, port):
         if not shutil.which('ssh'):
@@ -39,9 +144,16 @@ class TunnelManager:
             return False
         # user must provide token, but we allow a free variant template
         cmd = ["ssh","-o","StrictHostKeyChecking=no","-R",f"0:localhost:{port}","a.pinggy.io"]
-        subprocess.Popen(cmd)
-        self._log('SUCCESS', f'pinggy started for tcp {port}.')
-        return True
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.tunnel_processes['pinggy'] = proc
+            self._update_tunnel_info('pinggy', {'port': port, 'started_at': time.time()})
+            self._save_tunnel_state()
+            self._log('SUCCESS', f'pinggy started for tcp {port}.')
+            return True
+        except Exception as e:
+            self._log('ERROR', f'Failed to start pinggy: {e}')
+            return False
 
     def start_playit(self, port):
         # Playit requires Debian/proot (user choice)
@@ -49,5 +161,7 @@ class TunnelManager:
             self._log('ERROR', 'Debian environment required for playit.gg. Aborting.')
             return False
         # We assume playit binary is installed in Debian env; just document path
+        self._update_tunnel_info('playit', {'port': port, 'started_at': time.time(), 'note': 'Run playit agent inside Debian (proot-distro login)'})
+        self._save_tunnel_state()
         self._log('INFO', 'Please run playit agent inside Debian (proot-distro login).')
         return True

@@ -6,7 +6,7 @@ Real-time CPU/RAM monitoring with threading
 import psutil
 import threading
 import time
-from typing import Optional
+from typing import Optional, Dict, Any
 
 class PerformanceMonitor:
     """Real-time performance monitoring system"""
