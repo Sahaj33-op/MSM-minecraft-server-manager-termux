@@ -7,6 +7,9 @@ import sys
 import signal
 import time
 import argparse
+import psutil  # For getting live metrics
+import re      # For finding PID
+from utils.helpers import is_screen_session_running, get_screen_session_name, check_dependencies, get_server_directory, run_command  # To find log file
 
 from core.logger import EnhancedLogger
 from core.database import DatabaseManager
@@ -16,7 +19,6 @@ from managers.server_manager import ServerManager
 from managers.world_manager import WorldManager
 from managers.tunnel_manager import TunnelManager
 from ui.interface import UI
-from utils.helpers import is_screen_session_running, get_screen_session_name, check_dependencies
 
 VERSION = "Unified"
 
@@ -208,6 +210,152 @@ def server_switch_menu():
         except Exception:
             ui.print_error("Invalid selection")
 
+def show_performance_dashboard():
+    """Display live performance metrics for the current server."""
+    if server_mgr is None or ui is None or logger is None:
+        print("Error: System not initialized properly")
+        input("\nPress Enter to continue...")
+        return
+
+    current_server = server_mgr.get_current_server()
+    if not current_server:
+        ui.print_error("No server selected")
+        input("\nPress Enter to continue...")
+        return
+
+    screen_name = get_screen_session_name(current_server)
+
+    if not is_screen_session_running(screen_name):
+        ui.print_warning(f"Server '{current_server}' is not running.")
+        input("\nPress Enter to continue...")
+        return
+
+    logger.log('INFO', f"Starting performance dashboard for {current_server}")
+    print(f"{ui.colors.CYAN}Starting Performance Dashboard for '{current_server}'... Press Ctrl+C to exit.{ui.colors.RESET}")
+    time.sleep(2)
+
+    try:
+        pid = 0
+        server_process = None
+
+        # Find the screen process PID more reliably
+        try:
+            result = run_command(['screen', '-ls'], capture_output=True)
+            if result[0] == 0:
+                match = re.search(rf'(\d+)\.{screen_name}\s', result[1])
+                if match:
+                    pid = int(match.group(1))
+                    # Find the actual Java/PHP child process if possible (more accurate)
+                    parent = psutil.Process(pid)
+                    children = parent.children(recursive=True)
+                    # Look for java or php process among children
+                    for child in children:
+                        if child.name().lower() in ['java', 'php']:
+                            server_process = child
+                            break
+                    if not server_process:  # Fallback to screen process if child not found
+                        server_process = parent
+            if not server_process:
+                ui.print_warning("Could not find server process PID. Displaying limited info.")
+
+        except Exception as e:
+            logger.log('WARNING', f'Could not reliably get PID for monitoring: {e}')
+            ui.print_warning("Could not find server process PID. Displaying limited info.")
+
+        while True:
+            # Refresh system info for header
+            sys_info = monitor.get_system_info() if monitor else None
+            ui.print_header(version=VERSION, system_info=sys_info)
+            print(f"{ui.colors.BOLD}Performance Dashboard: {current_server}{ui.colors.RESET} (Press Ctrl+C to exit)\n")
+
+            cpu_percent = "N/A"
+            mem_percent = "N/A"
+            mem_rss_mb = "N/A"
+
+            # Get metrics if process found
+            if server_process:
+                try:
+                    if server_process.is_running():
+                        with server_process.oneshot():
+                            cpu_percent = f"{server_process.cpu_percent():.1f}%"
+                            mem_info = server_process.memory_info()
+                            mem_rss_mb = f"{mem_info.rss / (1024 * 1024):.1f} MB"
+                            # psutil memory_percent can be misleading in containers/proot, RSS is often better
+                            # mem_percent = f"{server_process.memory_percent():.1f}%"
+                    else:
+                        ui.print_warning("Server process stopped running.")
+                        break  # Exit dashboard loop
+                except psutil.NoSuchProcess:
+                    ui.print_warning("Server process disappeared.")
+                    break  # Exit dashboard loop
+                except Exception as e:
+                    logger.log('ERROR', f"Error getting process stats: {e}")
+                    cpu_percent = "Error"
+                    mem_rss_mb = "Error"
+
+            print(f"  {ui.colors.CYAN}CPU Usage:{ui.colors.RESET}  {cpu_percent}")
+            print(f"  {ui.colors.CYAN}RAM Usage:{ui.colors.RESET}  {mem_rss_mb}")
+            # print(f"  {ui.colors.CYAN}RAM Percent:{ui.colors.RESET} {mem_percent}")  # Optional
+
+            # --- Optional: Attempt to parse TPS and Players from log ---
+            # Note: This is less reliable than RCON or server plugins
+            tps_info = "N/A (Log parsing)"
+            player_count = "N/A (Log parsing)"
+            try:
+                server_path = get_server_directory(current_server)
+                log_file = server_path / "logs" / "latest.log"
+                if log_file.exists():
+                    with open(log_file, "r", errors='ignore') as f:
+                        # Read last ~200 lines for recent info
+                        lines = f.readlines()[-200:]
+
+                    # Simple TPS parsing (adjust regex based on server type/plugins)
+                    tps_found = False
+                    for line in reversed(lines):
+                        # Example regex for Paper/Spigot TPS:
+                        tps_match = re.search(r'TPS from last 1m, 5m, 15m:\s*\*([\d\.]+),\s*([\d\.]+),\s*([\d\.]+)', line)
+                        if tps_match:
+                            tps_info = f"{float(tps_match.group(1)):.1f} (1m)"
+                            tps_found = True
+                            break
+                    if not tps_found:
+                        # Fallback for simpler messages if needed
+                        pass
+
+                    # Simple Player count parsing (very basic)
+                    players = set()
+                    for line in lines:
+                        join_match = re.search(r'\]:\s*(\w+)\[.*logged in', line)
+                        quit_match = re.search(r'\]:\s*(\w+)\s*left the game', line)
+                        disc_match = re.search(r'\]:\s*(\w+)\s*lost connection', line)
+                        if join_match:
+                            players.add(join_match.group(1))
+                        elif quit_match:
+                            players.discard(quit_match.group(1))
+                        elif disc_match:
+                            players.discard(disc_match.group(1))
+                    player_count = str(len(players))
+
+            except Exception as e:
+                logger.log('DEBUG', f"Failed to parse log for TPS/Players: {e}")
+                tps_info = "Error parsing log"
+                player_count = "Error parsing log"
+
+            print(f"  {ui.colors.CYAN}TPS (est.):{ui.colors.RESET} {tps_info}")
+            print(f"  {ui.colors.CYAN}Players:{ui.colors.RESET}    {player_count}")
+            # --- End Optional Parsing ---
+
+            time.sleep(5)  # Refresh interval
+
+    except KeyboardInterrupt:
+        logger.log('INFO', "Performance dashboard stopped by user.")
+        print("\nExiting dashboard...")
+        time.sleep(1)
+    except Exception as e:
+        logger.log('ERROR', f"Error in performance dashboard: {e}")
+        ui.print_error(f"Dashboard error: {e}")
+        input("\nPress Enter to continue...")
+
 def menu_loop():
     # Check dependencies before starting
     if not check_dependencies():
@@ -248,10 +396,11 @@ def menu_loop():
                 ("6", "🗄️  World Manager"),
                 ("7", "📊 Statistics"),
                 ("8", "🌐 Tunneling"),
-                ("9", "➕ Create/Switch Server"),
+                ("9", "📈 Performance Dashboard"),
+                ("10", "➕ Create/Switch Server"),
                 ("0", "🚪 Exit")
             ]
-            
+
             for key, label in options:
                 print(f" {ui.colors.BOLD}{key}.{ui.colors.RESET} {label}")
         
@@ -260,35 +409,24 @@ def menu_loop():
         try:
             if choice == "1" and server_mgr is not None:
                 server_mgr.start_server()
-
             elif choice == "2" and server_mgr is not None:
                 server_mgr.stop_server()
-
             elif choice == "3" and server_mgr is not None:
                 server_mgr.install_server_menu()
-
             elif choice == "4":
                 configure_menu()
-
             elif choice == "5" and server_mgr is not None:
                 server_mgr.show_console()
-
             elif choice == "6":
                 world_menu()
-
             elif choice == "7" and server_mgr is not None:
                 server_mgr.show_statistics()
-
             elif choice == "8":
                 tunnel_menu()
-
-            elif choice == "9":
+            elif choice == "10":
                 server_switch_menu()
-
             elif choice == "0":
-                # Attempt clean shutdown of monitor
                 graceful_shutdown()
-
             else:
                 if ui is not None:
                     ui.print_error("Invalid option")
@@ -297,7 +435,10 @@ def menu_loop():
         except Exception as e:
             if logger is not None:
                 logger.log('ERROR', f"Unexpected error: {e}")
-            time.sleep(1)
+            # Also print to UI in case logger failed
+            if ui is not None:
+                ui.print_error(f"An unexpected error occurred: {e}")
+            time.sleep(1)  # Prevent rapid error loops
 
 def main():
     # Set up argument parser

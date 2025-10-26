@@ -77,6 +77,12 @@ This document outlines the unification of the Minecraft Server Manager (MSM) pro
 - Added support for .phar file handling and PHP execution
 - Configured default port (19132) for PocketMine-MP servers
 
+### 14. Added Performance Dashboard ✅
+- Added live performance monitoring dashboard showing real-time server metrics
+- Implemented CPU and RAM usage tracking with psutil
+- Added TPS and player count estimation by parsing server logs
+- Integrated dashboard into main menu as option 9
+
 ## Architecture Overview
 
 ### Core Components
@@ -100,7 +106,6 @@ This document outlines the unification of the Minecraft Server Manager (MSM) pro
 
 ### High Priority
 1. Add CLI Mode - Restore CLI argument parsing for automation/scripting use cases
-2. Performance Dashboard - Add a live monitoring dashboard showing real-time server metrics
 
 ### Medium Priority
 1. Enhanced World Management - Add more advanced world management features
