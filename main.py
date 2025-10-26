@@ -9,15 +9,18 @@ import time
 import argparse
 import psutil  # For getting live metrics
 import re      # For finding PID
+from pathlib import Path  # Import Path
 from utils.helpers import is_screen_session_running, get_screen_session_name, check_dependencies, get_server_directory, run_command  # To find log file
 
 from core.logger import EnhancedLogger
 from core.database import DatabaseManager
 from core.monitoring import PerformanceMonitor
 from core.config import ConfigManager
+from core import scheduler  # Import scheduler
 from managers.server_manager import ServerManager
 from managers.world_manager import WorldManager
 from managers.tunnel_manager import TunnelManager
+from managers.plugin_manager import PluginManager  # Import PluginManager
 from ui.interface import UI
 
 VERSION = "Unified"
@@ -35,6 +38,8 @@ ui = None
 server_mgr = None
 world_mgr = None
 tunnel_mgr = None
+plugin_mgr = None  # Plugin Manager
+global_scheduler = None  # Scheduler
 
 def graceful_shutdown(signum=None, frame=None):
     try:
@@ -43,6 +48,9 @@ def graceful_shutdown(signum=None, frame=None):
             if cur and monitor is not None:
                 # Best-effort stop monitor threads before exit
                 monitor.stop_monitoring(cur)
+        # Stop the scheduler
+        if global_scheduler is not None:
+            global_scheduler.stop()
     except Exception:
         pass
     if logger is not None:
@@ -53,7 +61,7 @@ def ensure_infra():
     os.makedirs(CONFIG_DIR, exist_ok=True)
 
 def init_system():
-    global logger, db, monitor, ui, server_mgr, world_mgr, tunnel_mgr
+    global logger, db, monitor, ui, server_mgr, world_mgr, tunnel_mgr, plugin_mgr, global_scheduler
 
     ensure_infra()
     logger = EnhancedLogger(LOG_FILE)
@@ -64,6 +72,9 @@ def init_system():
     server_mgr = ServerManager(db, logger, monitor)
     world_mgr = WorldManager(logger)
     tunnel_mgr = TunnelManager(logger)
+    plugin_mgr = PluginManager(logger, ui)  # Initialize PluginManager
+    global_scheduler = scheduler.Scheduler(Path(CONFIG_DIR), logger, server_mgr, world_mgr)  # Initialize Scheduler
+    global_scheduler.start()  # Start the scheduler
 
     # Select a default server if none set
     cfg = ConfigManager.load()
@@ -356,6 +367,175 @@ def show_performance_dashboard():
         ui.print_error(f"Dashboard error: {e}")
         input("\nPress Enter to continue...")
 
+def plugin_menu():
+    """Plugin management menu"""
+    if server_mgr is None or ui is None or plugin_mgr is None or logger is None:
+        print("Error: System not initialized properly")
+        input("\nPress Enter to continue...")
+        return
+
+    current_server = server_mgr.get_current_server()
+    if not current_server:
+        ui.print_error("No server selected")
+        input("\nPress Enter to continue...")
+        return
+
+    # Check if plugins are supported for this server type
+    plugins_dir = plugin_mgr._get_plugins_dir(current_server)
+    if not plugins_dir:
+         input("\nPress Enter to continue...")
+         return # Error message already printed by _get_plugins_dir
+
+    while True:
+        ui.clear_screen()
+        ui.print_header(version=VERSION)
+        print(f"{ui.colors.BOLD}Plugin Manager: {current_server}{ui.colors.RESET}\n")
+
+        plugins = plugin_mgr.list_plugins(current_server)
+        if plugins:
+            print("Installed Plugins:")
+            for i, (name, enabled) in enumerate(plugins, 1):
+                status = f"{ui.colors.GREEN}Enabled{ui.colors.RESET}" if enabled else f"{ui.colors.YELLOW}Disabled{ui.colors.RESET}"
+                print(f" {i}. {name} ({status})")
+        else:
+            print("No plugins found.")
+
+        print("\nOptions:")
+        print(" i. Install Plugin (URL or Path)")
+        print(" e. Enable Plugin")
+        print(" d. Disable Plugin")
+        print(" x. Delete Plugin")
+        print(" 0. Back to Main Menu")
+
+        choice = input(f"\n{ui.colors.YELLOW}Select option: {ui.colors.RESET}").strip().lower()
+
+        selected_plugin_name = None
+        if choice in ['e', 'd', 'x'] and plugins:
+             try:
+                 num = int(input("Enter plugin number: ").strip())
+                 if 1 <= num <= len(plugins):
+                      selected_plugin_name = plugins[num-1][0]
+                 else:
+                      ui.print_error("Invalid number.")
+             except ValueError:
+                  ui.print_error("Invalid input.")
+
+        if choice == 'i':
+            source = input("Enter Plugin URL or local .jar path: ").strip()
+            if source:
+                plugin_mgr.install_plugin(current_server, source)
+            else:
+                ui.print_warning("No source provided.")
+        elif choice == 'e' and selected_plugin_name:
+            plugin_mgr.enable_plugin(current_server, selected_plugin_name)
+        elif choice == 'd' and selected_plugin_name:
+            plugin_mgr.disable_plugin(current_server, selected_plugin_name)
+        elif choice == 'x' and selected_plugin_name:
+             plugin_mgr.delete_plugin(current_server, selected_plugin_name)
+        elif choice == '0':
+            break
+        elif choice not in ['i', 'e', 'd', 'x']:
+             ui.print_error("Invalid option.")
+
+        if choice != '0':
+             input("\nPress Enter to continue...")
+
+def scheduler_menu():
+    """Scheduled tasks menu."""
+    if global_scheduler is None or ui is None or logger is None:
+         print("Error: System not initialized properly")
+         input("\nPress Enter to continue...")
+         return
+
+    while True:
+        ui.clear_screen()
+        ui.print_header(version=VERSION)
+        print(f"{ui.colors.BOLD}Scheduled Tasks{ui.colors.RESET}\n")
+
+        tasks = global_scheduler.list_tasks()
+        if tasks:
+            print("Current Schedule:")
+            print(f"{'ID':<6} {'Server':<15} {'Type':<10} {'Frequency':<15} {'Time':<6} {'Enabled':<8} {'Last Run'}")
+            print("-" * 80)
+            for task in tasks:
+                last_run_dt = task.get('last_run_dt')
+                if last_run_dt is not None:
+                    last_run_str = last_run_dt.strftime('%Y-%m-%d %H:%M')
+                else:
+                    last_run_str = 'Never'
+                enabled_str = str(task.get('enabled', True))
+                print(f"{task.get('id', 'N/A'):<6} {task.get('server', 'N/A'):<15} {task.get('type', 'N/A'):<10} {task.get('frequency', 'N/A'):<15} {task.get('time', '--'):<6} {enabled_str:<8} {last_run_str}")
+        else:
+            print("No scheduled tasks found.")
+
+        print("\nOptions:")
+        print(" a. Add Task")
+        print(" t. Toggle Task (Enable/Disable)")
+        print(" r. Remove Task")
+        print(" 0. Back to Main Menu")
+
+        choice = input(f"\n{ui.colors.YELLOW}Select option: {ui.colors.RESET}").strip().lower()
+
+        if choice == 'a':
+             # --- Add Task Wizard ---
+             task_type = input("Task Type (backup / restart): ").strip().lower()
+             if task_type not in ['backup', 'restart']:
+                  ui.print_error("Invalid task type.")
+                  continue
+
+             # Server Selection (reuse server_switch_menu logic if possible)
+             if server_mgr is None:
+                 ui.print_error("Server manager not initialized.")
+                 continue
+             servers = server_mgr.list_servers()
+             if not servers: 
+                 ui.print_error("No servers exist.")
+                 continue
+             print("Select server:")
+             for i, s in enumerate(servers, 1): 
+                 print(f" {i}. {s}")
+             try:
+                 idx = int(input("Server number: ").strip()) - 1
+                 if not (0 <= idx < len(servers)): 
+                     raise ValueError
+                 server_name = servers[idx]
+             except (ValueError, IndexError): 
+                 ui.print_error("Invalid server selection.")
+                 continue
+
+             frequency = input("Frequency (hourly / daily / weekly@day e.g., weekly@sun): ").strip().lower()
+             # Add validation for frequency format here
+
+             time_str = None
+             if frequency.startswith("daily") or frequency.startswith("weekly"):
+                  time_str = input("Time (HH:MM, 24-hour format, e.g., 03:00): ").strip()
+                  # Add validation for time format here
+
+             global_scheduler.add_task(task_type, server_name, frequency, time_str)
+             # --- End Add Task Wizard ---
+
+        elif choice == 't':
+             try:
+                  task_id = int(input("Enter Task ID to toggle: ").strip())
+                  global_scheduler.toggle_task(task_id)
+             except ValueError: 
+                 ui.print_error("Invalid ID.")
+        elif choice == 'r':
+             try:
+                  task_id = int(input("Enter Task ID to remove: ").strip())
+                  confirm = input(f"Remove task {task_id}? (y/N): ").strip().lower()
+                  if confirm == 'y':
+                       global_scheduler.remove_task(task_id)
+             except ValueError: 
+                 ui.print_error("Invalid ID.")
+        elif choice == '0':
+            break
+        else:
+            ui.print_error("Invalid option.")
+
+        if choice != '0':
+             input("\nPress Enter to continue...")
+
 def menu_loop():
     # Check dependencies before starting
     if not check_dependencies():
@@ -397,6 +577,8 @@ def menu_loop():
                 ("7", "📊 Statistics"),
                 ("8", "🌐 Tunneling"),
                 ("9", "📈 Performance Dashboard"),
+                ("P", "🔌 Plugin Manager"),
+                ("S", "⏰ Scheduler"),
                 ("10", "➕ Create/Switch Server"),
                 ("0", "🚪 Exit")
             ]
@@ -423,6 +605,12 @@ def menu_loop():
                 server_mgr.show_statistics()
             elif choice == "8":
                 tunnel_menu()
+            elif choice == "9":
+                show_performance_dashboard()
+            elif choice.upper() == "P":
+                plugin_menu()
+            elif choice.upper() == "S":
+                scheduler_menu()
             elif choice == "10":
                 server_switch_menu()
             elif choice == "0":
