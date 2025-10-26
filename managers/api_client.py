@@ -287,3 +287,67 @@ class QuiltAPI:
         except Exception as e:
             log(f"Error generating Quilt download URL: {e}", "ERROR")
             return None
+
+class PocketMineAPI:
+    """PocketMine-MP API client."""
+    
+    BASE_URL = "https://api.github.com/repos/pmmp/PocketMine-MP/releases"
+    
+    @staticmethod
+    def get_versions() -> Optional[List[str]]:
+        """Fetch available PocketMine versions (tags) from GitHub Releases."""
+        try:
+            url = PocketMineAPI.BASE_URL
+            context = ssl.create_default_context()
+            # Add User-Agent header to avoid potential blocking
+            req = urllib.request.Request(url, headers={'User-Agent': 'MSM-Server-Manager'})
+            with urllib.request.urlopen(req, timeout=15, context=context) as response:
+                data = json.loads(response.read().decode())
+                # Get non-draft and non-prerelease versions
+                versions = [
+                    r["tag_name"] for r in data 
+                    if not r.get("draft", True) # Exclude drafts
+                       # Adjust if you want pre-releases: and not r.get("prerelease", False) 
+                       and any(asset.get("name", "").endswith(".phar") for asset in r.get("assets", [])) # Ensure phar exists
+                ]
+                log(f"Fetched {len(versions)} PocketMine versions")
+                return versions # GitHub API often returns newest first, may need sorting depending on preference
+        except Exception as e:
+            log(f"Failed to fetch PocketMine versions: {e}", "ERROR")
+            return None
+
+    @staticmethod
+    def get_latest_build(version: str) -> Optional[Dict]:
+        """Get build info (download asset) for a specific version tag."""
+        try:
+            # GitHub API uses tags, so we fetch info for the specific tag
+            url = f"{PocketMineAPI.BASE_URL}/tags/{version}" 
+            context = ssl.create_default_context()
+            req = urllib.request.Request(url, headers={'User-Agent': 'MSM-Server-Manager'})
+            with urllib.request.urlopen(req, timeout=15, context=context) as response:
+                release_data = json.loads(response.read().decode())
+                for asset in release_data.get("assets", []):
+                    if asset.get("name", "").endswith(".phar"):
+                        log(f"Found PocketMine asset for {version}: {asset['name']}")
+                        return {
+                            "build": asset.get("id"), # Use asset ID as a pseudo-build number
+                            "download_url": asset.get("browser_download_url"),
+                            "filename": asset.get("name")
+                        }
+                log(f"No .phar asset found for PocketMine version {version}", "WARNING")
+                return None
+        except Exception as e:
+            log(f"Failed to fetch PocketMine build info for {version}: {e}", "ERROR")
+            return None
+
+    @staticmethod
+    def get_download_url(version: str, build_info: dict) -> Optional[str]:
+        """Get download URL directly from the build_info dictionary."""
+        # For PocketMine, the build_info already contains the direct download URL
+        url = build_info.get("download_url")
+        if url:
+             log(f"Using PocketMine download URL: {url}")
+             return url
+        else:
+            log(f"Missing download_url in build_info for PocketMine {version}", "ERROR")
+            return None

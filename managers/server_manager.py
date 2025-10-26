@@ -15,7 +15,9 @@ from typing import Optional, Dict, List
 from core.config import ConfigManager
 from core.database import DatabaseManager
 from core.monitoring import PerformanceMonitor
-from managers.api_client import PaperMCAPI, PurpurAPI, FoliaAPI, VanillaAPI, FabricAPI, QuiltAPI
+from managers.api_client import (
+    PaperMCAPI, PurpurAPI, FoliaAPI, VanillaAPI, FabricAPI, QuiltAPI, PocketMineAPI
+)
 from utils.helpers import (
     sanitize_input, get_java_path, is_screen_session_running, 
     run_command, get_server_directory, get_screen_session_name
@@ -31,7 +33,8 @@ class ServerManager:
         "3": ("Folia", FoliaAPI, "folia"),
         "4": ("Fabric", FabricAPI, "fabric"),
         "5": ("Quilt", QuiltAPI, "quilt"),
-        "6": ("Vanilla", VanillaAPI, "vanilla")
+        "6": ("Vanilla", VanillaAPI, "vanilla"),
+        "7": ("PocketMine-MP", PocketMineAPI, "pocketmine")
     }
     
     # Complete server.properties settings
@@ -120,8 +123,11 @@ class ServerManager:
             return False
         
         server_config = ConfigManager.load_server_config(current_server)
-        if not server_config.get('server_flavor'):
-            self.logger.log('ERROR', 'Server not installed. Please install first.')
+        flavor = server_config.get('server_flavor')
+        version = server_config.get('server_version')
+        
+        if not flavor or not version:
+            self.logger.log('ERROR', 'Server not installed or configured. Please install first.')
             return False
         
         server_dir = get_server_directory(current_server)
@@ -131,62 +137,108 @@ class ServerManager:
             self.logger.log('WARNING', 'Server is already running')
             return False
         
-        # Find server JAR
-        jar_files = list(server_dir.glob('*.jar'))
-        if not jar_files:
-            self.logger.log('ERROR', 'No server JAR found')
-            return False
-        
-        jar_file = jar_files[0]
-        java_path = get_java_path(server_config.get('server_version', ''))
-        
-        if not java_path:
-            self.logger.log('ERROR', 'Java not found. Install with: pkg install openjdk-17')
-            return False
-        
-        # Accept EULA if needed
-        eula_file = server_dir / 'eula.txt'
-        if not eula_file.exists() or 'eula=false' in eula_file.read_text():
-            eula_file.write_text('eula=true\n')
-            self.logger.log('INFO', 'EULA accepted')
-        
-        # Create or update server.properties
-        self._update_server_properties(current_server, server_config.get('server_settings', {}))
-        
-        # Build command
-        ram_mb = server_config.get('ram_mb', 2048)
-        java_args = [
-            java_path, f'-Xmx{ram_mb}M', f'-Xms{ram_mb}M',
-            '-XX:+UseG1GC', '-jar', str(jar_file), 'nogui'
-        ]
-        
-        screen_cmd = ['screen', '-dmS', screen_name] + java_args
+        # --- Determine startup command based on flavor ---
+        startup_command = []
+        ram_mb = server_config.get('ram_mb', 1024) # Default RAM
+
+        if flavor == "pocketmine":
+            # Find .phar file
+            phar_files = list(server_dir.glob('*.phar'))
+            if not phar_files:
+                self.logger.log('ERROR', 'PocketMine PHAR file not found')
+                return False
+            phar_file = phar_files[0]
+            # Check if PHP is available
+            if not shutil.which('php'):
+                 self.logger.log('ERROR', 'PHP not found. Install with: pkg install php')
+                 return False
+            startup_command = ['php', str(phar_file)] 
+            # Note: PocketMine doesn't use RAM args like Java
+            # Ensure eula.txt is NOT created for PocketMine
+            eula_file = server_dir / 'eula.txt'
+            if eula_file.exists(): eula_file.unlink() # Remove if it exists by mistake
+
+        else: # Assume Java-based server (Paper, Purpur, Vanilla, etc.)
+            # Find server JAR
+            jar_files = list(server_dir.glob('*.jar'))
+            if not jar_files:
+                # Special check for Fabric/Quilt that might use different names initially
+                potential_launchers = list(server_dir.glob('fabric-server-launch.jar')) + \
+                                      list(server_dir.glob('quilt-server-launch.jar'))
+                if potential_launchers:
+                    jar_files = potential_launchers
+                
+            if not jar_files:
+                self.logger.log('ERROR', 'No server JAR found')
+                return False
+            
+            jar_file = jar_files[0] # Use the first one found
+            java_path = get_java_path(version) 
+            
+            if not java_path:
+                self.logger.log('ERROR', f'Required Java version for {version} not found.')
+                return False
+
+            # Accept EULA if needed
+            eula_file = server_dir / 'eula.txt'
+            try:
+                if not eula_file.exists() or 'eula=false' in eula_file.read_text(errors='ignore'):
+                    eula_file.write_text('eula=true\n')
+                    self.logger.log('INFO', 'EULA accepted')
+            except Exception as e:
+                 self.logger.log('WARNING', f'Could not handle EULA file: {e}')
+                 # Proceed anyway, server might handle it
+
+            # Create or update server.properties
+            self._update_server_properties(current_server, server_config.get('server_settings', {}))
+
+            # Build command
+            java_args = [
+                java_path, f'-Xmx{ram_mb}M', f'-Xms{ram_mb}M',
+                '-XX:+UseG1GC', # Add other recommended flags if desired
+                '-jar', str(jar_file), 'nogui'
+            ]
+            startup_command = java_args
+
+        # --- End of command determination ---
+
+        if not startup_command:
+             self.logger.log('ERROR', 'Could not determine startup command.')
+             return False
+
+        screen_cmd = ['screen', '-dmS', screen_name] + startup_command
         
         try:
-            returncode, stdout, stderr = run_command(screen_cmd, cwd=str(server_dir))
+            # Pass cwd=str(server_dir) to run command inside the server directory
+            returncode, stdout, stderr = run_command(screen_cmd, cwd=str(server_dir)) 
             if returncode == 0:
                 self.logger.log('SUCCESS', f'Server {current_server} started')
                 
                 # Log session start
-                flavor = server_config.get('server_flavor')
-                version = server_config.get('server_version')
                 self.current_session_id = self.db.log_session_start(current_server, flavor, version)
                 
                 # Start monitoring
-                time.sleep(3)  # Give server time to start
-                # Get PID from screen session
-                result = run_command(['screen', '-ls', screen_name], capture_output=True)
-                pid = 0
-                if result[0] == 0:  # success
-                    import re
-                    pid_match = re.search(r'(\d+)\.', result[1])
-                    if pid_match:
-                        pid = int(pid_match.group(1))
-                self.monitor.start_monitoring(current_server, pid)
+                time.sleep(3) # Give server time to start
                 
+                pid = 0
+                try:
+                    # More robust PID finding for screen
+                    result = run_command(['screen', '-ls'], capture_output=True)
+                    if result[0] == 0:
+                        match = re.search(rf'(\d+)\.{screen_name}\s', result[1])
+                        if match:
+                            pid = int(match.group(1))
+                except Exception as e:
+                     self.logger.log('WARNING', f'Could not reliably get PID for monitoring: {e}')
+
+                if pid > 0:
+                    self.monitor.start_monitoring(current_server, pid)
+                else:
+                     self.logger.log('WARNING', 'Could not find server process PID for monitoring.')
+
                 return True
             else:
-                self.logger.log('ERROR', f'Failed to start server: {stderr}')
+                self.logger.log('ERROR', f'Failed to start server in screen: {stderr}')
                 return False
         except Exception as e:
             self.logger.log('ERROR', f'Error starting server: {e}')
@@ -276,7 +328,7 @@ class ServerManager:
         for key, (name, api_class, flavor_key) in self.SERVER_TYPES.items():
             print(f" {key}. {name}")
         
-        choice = input(f"\n{self.ui.colors.YELLOW}Select server type (1-6): {self.ui.colors.RESET}").strip()
+        choice = input(f"\n{self.ui.colors.YELLOW}Select server type (1-7): {self.ui.colors.RESET}").strip()
         
         if choice not in self.SERVER_TYPES:
             self.ui.print_error('Invalid selection')
@@ -337,19 +389,24 @@ class ServerManager:
         input('Press Enter to continue...')
     
     def _download_server(self, server_name: str, server_type: str, api_class, version: str, flavor_key: str) -> bool:
-        """Download and install server JAR"""
+        """Download and install server JAR or PHAR"""
         server_dir = get_server_directory(server_name)
-        jar_path = server_dir / 'server.jar'
         
         try:
             download_url = None
-            
+            build_info = None # Store build info
+            target_filename = "server.jar" # Default for Java
+
             if hasattr(api_class, 'get_latest_build'):
-                # Paper-like APIs
+                # Paper-like and PocketMine APIs
                 build_info = api_class.get_latest_build(version)
                 if build_info:
-                    build_num = build_info.get('build')
-                    download_url = api_class.get_download_url(version, build_num)
+                    if flavor_key == "pocketmine":
+                        download_url = api_class.get_download_url(version, build_info)
+                        target_filename = build_info.get("filename", "PocketMine-MP.phar") # Use actual filename
+                    else: # Paper, Purpur, Folia
+                         build_num = build_info.get('build')
+                         download_url = api_class.get_download_url(version, build_num)
             elif hasattr(api_class, 'get_loader_versions'):
                 # Fabric/Quilt APIs
                 loaders = api_class.get_loader_versions()
@@ -362,8 +419,10 @@ class ServerManager:
             if not download_url:
                 self.logger.log('ERROR', f'Could not get download URL for {server_type} {version}')
                 return False
+
+            jar_path = server_dir / target_filename # Use the determined filename
             
-            self.ui.print_info(f'Downloading {server_type} {version}...')
+            self.ui.print_info(f'Downloading {server_type} {version} to {jar_path}...')
             
             # Download with progress
             def progress_hook(block_num, block_size, total_size):
@@ -371,18 +430,27 @@ class ServerManager:
                     percent = min(100, (block_num * block_size * 100) // total_size)
                     print(f'\rProgress: {percent}%', end='', flush=True)
             
-            urllib.request.urlretrieve(download_url, jar_path, progress_hook)
-            print()  # New line after progress
-            
+            urllib.request.urlretrieve(download_url, jar_path, progress_hook) # Ensure progress_hook is defined as before
+            print() # New line after progress
+
             # Verify download
             if not jar_path.exists() or jar_path.stat().st_size == 0:
                 self.logger.log('ERROR', 'Download verification failed')
+                # Clean up empty file
+                if jar_path.exists():
+                    jar_path.unlink()
                 return False
             
             # Update server config
             server_config = ConfigManager.load_server_config(server_name)
             server_config['server_flavor'] = flavor_key
             server_config['server_version'] = version
+            # Add build info if available (useful for Paper/Purpur/Folia/PocketMine)
+            if build_info and build_info.get('build'):
+                 server_config['server_build'] = build_info.get('build')
+            # Set default port based on type
+            server_config.setdefault('server_settings', {})['port'] = 19132 if flavor_key == "pocketmine" else 25565
+
             ConfigManager.save_server_config(server_name, server_config)
             
             self.logger.log('SUCCESS', f'Installed {server_type} {version} for {server_name}')
@@ -390,6 +458,13 @@ class ServerManager:
             
         except Exception as e:
             self.logger.log('ERROR', f'Download failed: {e}')
+            # Clean up potentially incomplete file
+            jar_path = server_dir / target_filename
+            if jar_path.exists():
+                 try:
+                     jar_path.unlink()
+                 except OSError:
+                     pass # Ignore cleanup errors
             return False
     
     def show_statistics(self):

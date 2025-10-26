@@ -44,6 +44,7 @@ This document outlines the unification of the Minecraft Server Manager (MSM) pro
 - Added PID extraction for monitoring
 - Improved process tracking
 - Added server.properties file management with 16+ settings
+- Added support for PHP-based servers (PocketMine-MP)
 
 ### 7. Added Missing Dependencies Check ✅
 - Added dependency checking at startup
@@ -69,6 +70,12 @@ This document outlines the unification of the Minecraft Server Manager (MSM) pro
 ### 12. Improved Java Detection ✅
 - Fixed basic path checking with intelligent Java version detection (8/17/21 based on MC version)
 - Enhanced get_java_path function to work properly on Termux setups
+
+### 13. Added PocketMine-MP Support ✅
+- Added PocketMineAPI class to fetch versions and download PHAR files from GitHub
+- Integrated PocketMine-MP into ServerManager with proper PHP startup commands
+- Added support for .phar file handling and PHP execution
+- Configured default port (19132) for PocketMine-MP servers
 
 ## Architecture Overview
 
