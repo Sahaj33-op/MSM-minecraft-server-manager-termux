@@ -65,7 +65,7 @@ pkg update && pkg upgrade -y
 pkg install python git wget curl screen openjdk-17 -y
 
 # 3. Clone the repository
-git clone https://github.com/sahaj33-op/MSM-minecraft-server-manager-termux.git
+git clone --branch unified-merge-main-v1.1.0 https://github.com/sahaj33-op/MSM-minecraft-server-manager-termux.git
 cd MSM-minecraft-server-manager-termux
 
 # 4. Install Python dependencies
