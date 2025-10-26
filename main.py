@@ -75,28 +75,8 @@ def configure_menu():
         print("Error: System not initialized properly")
         return
         
-    cur = server_mgr.get_current_server()
-    if not cur:
-        ui.print_error("No server selected")
-        input("\nPress Enter to continue...")
-        return
-    cfg = ConfigManager.load_server_config(cur)
-    print("\nBasic Settings:")
-    ram = input(f"RAM MB [{cfg.get('ram_mb', 2048)}]: ").strip()
-    if ram:
-        cfg['ram_mb'] = int(ram)
-    port = input(f"Port [{cfg.get('server_settings', {}).get('port', 25565)}]: ").strip()
-    if port:
-        cfg.setdefault('server_settings', {})['port'] = int(port)
-    motd = input(f"MOTD [{cfg.get('server_settings', {}).get('motd', 'A Minecraft Server')}]: ").strip()
-    if motd:
-        cfg['server_settings']['motd'] = motd
-    maxp = input(f"Max Players [{cfg.get('server_settings', {}).get('max-players', 20)}]: ").strip()
-    if maxp:
-        cfg['server_settings']['max-players'] = int(maxp)
-    ConfigManager.save_server_config(cur, cfg)
-    logger.log('SUCCESS', "Configuration updated")
-    input("\nPress Enter to continue...")
+    # Use the enhanced configuration menu
+    server_mgr.configure_server_menu()
 
 def world_menu():
     """World management menu"""
@@ -180,8 +160,9 @@ def tunnel_menu():
     print(" 2. cloudflared (Termux-native)")
     print(" 3. pinggy (Termux-native)")
     print(" 4. playit.gg (requires proot Debian)")
+    print(" 5. Show tunnel status")
     print(" 0. Back")
-    sub = input("\nSelect (0-4): ").strip()
+    sub = input("\nSelect (0-5): ").strip()
     ok = False
     if sub == "1":
         ok = tunnel_mgr.start_ngrok(port)
@@ -191,6 +172,14 @@ def tunnel_menu():
         ok = tunnel_mgr.start_pinggy(port)
     elif sub == "4":
         ok = tunnel_mgr.start_playit(port)  # will prompt for proot if needed
+    elif sub == "5":
+        # Show tunnel status
+        tunnels = tunnel_mgr.list_tunnels()
+        print("\nTunnel Status:")
+        for name, info in tunnels.items():
+            print(f"  {name}: {info['status']} - {info['url']}")
+        input("\nPress Enter to continue...")
+        return
     if ok:
         logger.log('SUCCESS', "Tunnel start requested")
     input("\nPress Enter to continue...")

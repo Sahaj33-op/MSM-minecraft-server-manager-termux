@@ -34,6 +34,14 @@ class ServerManager:
         "6": ("Vanilla", VanillaAPI, "vanilla")
     }
     
+    # Complete server.properties settings
+    SERVER_PROPERTIES_SETTINGS = [
+        'gamemode', 'difficulty', 'pvp', 'white-list', 'view-distance',
+        'max-players', 'motd', 'port', 'online-mode', 'allow-flight',
+        'spawn-animals', 'spawn-monsters', 'spawn-npcs', 'enable-command-block',
+        'max-world-size', 'player-idle-timeout', 'level-type', 'level-name'
+    ]
+    
     def __init__(self, db_manager: DatabaseManager, logger, monitor: PerformanceMonitor):
         self.db = db_manager
         self.logger = logger
@@ -75,7 +83,22 @@ class ServerManager:
                 'server_settings': {
                     'motd': f'{name} Server',
                     'port': 25565,
-                    'max-players': 20
+                    'max-players': 20,
+                    'gamemode': 'survival',
+                    'difficulty': 'normal',
+                    'pvp': True,
+                    'white-list': False,
+                    'view-distance': 10,
+                    'online-mode': True,
+                    'allow-flight': False,
+                    'spawn-animals': True,
+                    'spawn-monsters': True,
+                    'spawn-npcs': True,
+                    'enable-command-block': False,
+                    'max-world-size': 29999984,
+                    'player-idle-timeout': 0,
+                    'level-type': 'default',
+                    'level-name': 'world'
                 }
             }
             
@@ -127,6 +150,9 @@ class ServerManager:
             eula_file.write_text('eula=true\n')
             self.logger.log('INFO', 'EULA accepted')
         
+        # Create or update server.properties
+        self._update_server_properties(current_server, server_config.get('server_settings', {}))
+        
         # Build command
         ram_mb = server_config.get('ram_mb', 2048)
         java_args = [
@@ -165,6 +191,33 @@ class ServerManager:
         except Exception as e:
             self.logger.log('ERROR', f'Error starting server: {e}')
             return False
+    
+    def _update_server_properties(self, server_name: str, settings: dict):
+        """Update server.properties file with given settings"""
+        server_dir = get_server_directory(server_name)
+        properties_file = server_dir / 'server.properties'
+        
+        # Read existing properties or create new ones
+        properties = {}
+        if properties_file.exists():
+            with open(properties_file, 'r') as f:
+                for line in f:
+                    if '=' in line and not line.strip().startswith('#'):
+                        key, value = line.strip().split('=', 1)
+                        properties[key] = value
+        
+        # Update with new settings
+        properties.update(settings)
+        
+        # Write back to file
+        with open(properties_file, 'w') as f:
+            f.write('# Minecraft server properties\n')
+            f.write(f'# Updated {time.strftime("%a %b %d %H:%M:%S %Z %Y")}\n')
+            for key, value in properties.items():
+                if isinstance(value, bool):
+                    f.write(f'{key}={str(value).lower()}\n')
+                else:
+                    f.write(f'{key}={value}\n')
     
     def stop_server(self) -> bool:
         """Stop the current server gracefully"""
@@ -232,9 +285,14 @@ class ServerManager:
         
         server_type_name, api_class, flavor_key = self.SERVER_TYPES[choice]
         
-        # Get versions
+        # Get versions with error handling
         self.ui.print_info(f'Fetching {server_type_name} versions...')
-        versions = api_class.get_versions()
+        try:
+            versions = api_class.get_versions()
+        except Exception as e:
+            self.ui.print_error(f'Failed to fetch {server_type_name} versions: {e}')
+            input('Press Enter to continue...')
+            return
         
         if not versions:
             self.ui.print_error(f'Failed to fetch {server_type_name} versions')
@@ -267,11 +325,14 @@ class ServerManager:
                 input('Press Enter to continue...')
                 return
         
-        # Download server
-        if self._download_server(current_server, server_type_name, api_class, selected_version, flavor_key):
-            self.ui.print_success(f'{server_type_name} {selected_version} installed successfully!')
-        else:
-            self.ui.print_error('Installation failed')
+        # Download server with error handling
+        try:
+            if self._download_server(current_server, server_type_name, api_class, selected_version, flavor_key):
+                self.ui.print_success(f'{server_type_name} {selected_version} installed successfully!')
+            else:
+                self.ui.print_error('Installation failed')
+        except Exception as e:
+            self.ui.print_error(f'Installation failed: {e}')
         
         input('Press Enter to continue...')
     
@@ -385,3 +446,100 @@ class ServerManager:
         input('Press Enter to attach...')
         
         os.system(f'screen -r {screen_name}')
+    
+    def configure_server_menu(self):
+        """Complete configuration menu with 16+ server.properties settings"""
+        current_server = self.get_current_server()
+        if not current_server:
+            self.ui.print_error('No server selected')
+            input('Press Enter to continue...')
+            return
+        
+        server_config = ConfigManager.load_server_config(current_server)
+        settings = server_config.get('server_settings', {})
+        
+        self.ui.clear_screen()
+        self.ui.print_header()
+        print(f"{self.ui.colors.BOLD}Configure Server: {current_server}{self.ui.colors.RESET}\n")
+        
+        # Display current settings
+        print("Current Settings:")
+        for setting in self.SERVER_PROPERTIES_SETTINGS:
+            current_value = settings.get(setting, 'Not set')
+            print(f"  {setting}: {current_value}")
+        
+        print("\nOptions:")
+        print(" 1. Edit setting")
+        print(" 2. Reset to defaults")
+        print(" 0. Back")
+        
+        choice = input(f"\n{self.ui.colors.YELLOW}Select option: {self.ui.colors.RESET}").strip()
+        
+        if choice == "1":
+            self._edit_server_setting(current_server, settings)
+        elif choice == "2":
+            self._reset_server_settings(current_server)
+        
+        input('Press Enter to continue...')
+    
+    def _edit_server_setting(self, server_name: str, settings: dict):
+        """Edit a specific server setting"""
+        print("\nAvailable settings to edit:")
+        for i, setting in enumerate(self.SERVER_PROPERTIES_SETTINGS, 1):
+            print(f" {i}. {setting}")
+        
+        try:
+            selection = int(input(f"\n{self.ui.colors.YELLOW}Select setting to edit (1-{len(self.SERVER_PROPERTIES_SETTINGS)}): {self.ui.colors.RESET}").strip())
+            if 1 <= selection <= len(self.SERVER_PROPERTIES_SETTINGS):
+                setting_name = self.SERVER_PROPERTIES_SETTINGS[selection - 1]
+                current_value = settings.get(setting_name, '')
+                new_value = input(f"Enter new value for {setting_name} [{current_value}]: ").strip()
+                
+                if new_value:
+                    # Convert to appropriate type
+                    if setting_name in ['port', 'max-players', 'view-distance', 'max-world-size', 'player-idle-timeout']:
+                        try:
+                            new_value = int(new_value)
+                        except ValueError:
+                            self.ui.print_error('Invalid number')
+                            return
+                    elif setting_name in ['pvp', 'white-list', 'online-mode', 'allow-flight', 'spawn-animals', 'spawn-monsters', 'spawn-npcs', 'enable-command-block']:
+                        new_value = new_value.lower() in ['true', '1', 'yes', 'on']
+                    
+                    settings[setting_name] = new_value
+                    server_config = ConfigManager.load_server_config(server_name)
+                    server_config['server_settings'] = settings
+                    ConfigManager.save_server_config(server_name, server_config)
+                    self.ui.print_success(f'Updated {setting_name} to {new_value}')
+            else:
+                self.ui.print_error('Invalid selection')
+        except ValueError:
+            self.ui.print_error('Invalid input')
+    
+    def _reset_server_settings(self, server_name: str):
+        """Reset server settings to defaults"""
+        confirm = input(f"{self.ui.colors.YELLOW}Are you sure you want to reset all settings to defaults? (y/N): {self.ui.colors.RESET}").strip().lower()
+        if confirm == 'y':
+            server_config = ConfigManager.load_server_config(server_name)
+            server_config['server_settings'] = {
+                'motd': f'{server_name} Server',
+                'port': 25565,
+                'max-players': 20,
+                'gamemode': 'survival',
+                'difficulty': 'normal',
+                'pvp': True,
+                'white-list': False,
+                'view-distance': 10,
+                'online-mode': True,
+                'allow-flight': False,
+                'spawn-animals': True,
+                'spawn-monsters': True,
+                'spawn-npcs': True,
+                'enable-command-block': False,
+                'max-world-size': 29999984,
+                'player-idle-timeout': 0,
+                'level-type': 'default',
+                'level-name': 'world'
+            }
+            ConfigManager.save_server_config(server_name, server_config)
+            self.ui.print_success('Settings reset to defaults')
