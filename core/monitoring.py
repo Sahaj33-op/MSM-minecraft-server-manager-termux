@@ -22,6 +22,7 @@ class PerformanceMonitor:
         self.logger = logger
         self.monitor_threads = {}
         self.stop_events = {}
+        self._lock = threading.Lock()  # Thread safety lock
 
     def _log(self, level, message):
         """Log a message using the logger or print to console.
@@ -45,23 +46,25 @@ class PerformanceMonitor:
         Returns:
             True if monitoring started successfully, False otherwise
         """
-        if server_name in self.monitor_threads:
-            self._log('WARNING', f'Monitoring already active for {server_name}')
-            return False
+        with self._lock:
+            if server_name in self.monitor_threads:
+                self._log('WARNING', f'Monitoring already active for {server_name}')
+                return False
 
-        stop_event = threading.Event()
-        monitor_thread = threading.Thread(
-            target=self._monitor_thread,
-            args=(server_name, pid, stop_event),
-            daemon=True
-        )
-        
-        self.stop_events[server_name] = stop_event
-        self.monitor_threads[server_name] = monitor_thread
-        
-        monitor_thread.start()
-        self._log('INFO', f'Started monitoring {server_name} (PID: {pid})')
-        return True
+            stop_event = threading.Event()
+            monitor_thread = threading.Thread(
+                target=self._monitor_thread,
+                args=(server_name, pid, stop_event),
+                daemon=True,
+                name=f"monitor-{server_name}"
+            )
+            
+            self.stop_events[server_name] = stop_event
+            self.monitor_threads[server_name] = monitor_thread
+            
+            monitor_thread.start()
+            self._log('INFO', f'Started monitoring {server_name} (PID: {pid})')
+            return True
 
     def stop_monitoring(self, server_name: str) -> bool:
         """Stop monitoring a server.
@@ -72,17 +75,21 @@ class PerformanceMonitor:
         Returns:
             True if monitoring stopped successfully, False otherwise
         """
-        if server_name not in self.stop_events:
-            return False
+        with self._lock:
+            if server_name not in self.stop_events:
+                return False
 
-        self.stop_events[server_name].set()
-        if server_name in self.monitor_threads:
-            self.monitor_threads[server_name].join(timeout=5)
-            del self.monitor_threads[server_name]
-        del self.stop_events[server_name]
-        
-        self._log('INFO', f'Stopped monitoring {server_name}')
-        return True
+            self.stop_events[server_name].set()
+            if server_name in self.monitor_threads:
+                thread = self.monitor_threads[server_name]
+                thread.join(timeout=5)
+                if thread.is_alive():
+                    self._log('WARNING', f'Monitor thread for {server_name} did not stop gracefully')
+                del self.monitor_threads[server_name]
+            del self.stop_events[server_name]
+            
+            self._log('INFO', f'Stopped monitoring {server_name}')
+            return True
 
     def _monitor_thread(self, server_name: str, pid: int, stop_event: threading.Event):
         """Monitoring thread for a server process.
@@ -92,6 +99,7 @@ class PerformanceMonitor:
             pid: Process ID of the server process
             stop_event: Event to signal thread termination
         """
+        process = None
         try:
             process = psutil.Process(pid)
             self._log('INFO', f'Monitoring thread started for {server_name} (PID: {pid})')
@@ -103,22 +111,38 @@ class PerformanceMonitor:
                             cpu = process.cpu_percent()
                             mem = process.memory_percent()
                             if self.db_manager:
-                                self.db_manager.log_performance_metric(server_name, mem, cpu)
+                                try:
+                                    self.db_manager.log_performance_metric(server_name, mem, cpu)
+                                except Exception as db_error:
+                                    self._log('ERROR', f'Database error logging metrics for {server_name}: {db_error}')
                     else:
                         self._log('WARNING', f'Process {pid} for {server_name} is no longer running')
                         break
                 except psutil.NoSuchProcess:
                     self._log('WARNING', f'Process {pid} for {server_name} not found')
                     break
+                except psutil.AccessDenied:
+                    self._log('ERROR', f'Access denied monitoring process {pid} for {server_name}')
+                    break
                 except Exception as e:
                     self._log('ERROR', f'Error monitoring {server_name}: {e}')
+                    # Continue monitoring despite errors
+                    continue
                     
         except psutil.NoSuchProcess:
             self._log('WARNING', f'Monitoring failed: Process {pid} for {server_name} not found')
+        except psutil.AccessDenied:
+            self._log('ERROR', f'Access denied to process {pid} for {server_name}')
         except Exception as e:
             self._log('ERROR', f'Error in monitoring thread for {server_name}: {e}')
-        
-        self._log('INFO', f'Monitoring thread stopped for {server_name}')
+        finally:
+            # Clean up thread references
+            with self._lock:
+                if server_name in self.monitor_threads:
+                    del self.monitor_threads[server_name]
+                if server_name in self.stop_events:
+                    del self.stop_events[server_name]
+            self._log('INFO', f'Monitoring thread stopped for {server_name}')
 
     def get_system_info(self) -> Dict[str, Any]:
         """Get system information for UI display.

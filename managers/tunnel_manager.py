@@ -214,20 +214,48 @@ class TunnelManager:
         if not shutil.which('ngrok'):
             self._log('ERROR', 'ngrok not found. Install from ngrok.com and add to PATH.')
             return False
-        cmd = ["ngrok", "tcp", str(port)]
+        
+        # Security: Validate port number
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            port_int = int(port)
+            if not (1 <= port_int <= 65535):
+                self._log('ERROR', f'Invalid port number: {port}')
+                return False
+        except (ValueError, TypeError):
+            self._log('ERROR', f'Invalid port number: {port}')
+            return False
+        
+        cmd = ["ngrok", "tcp", str(port_int)]
+        try:
+            proc = subprocess.Popen(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                shell=False,  # Security: Never use shell=True
+                text=True
+            )
             self.tunnel_processes['ngrok'] = proc
-            self._update_tunnel_info('ngrok', {'port': port, 'started_at': time.time(), 'url': 'Extracting...'})
+            self._update_tunnel_info('ngrok', {'port': port_int, 'started_at': time.time(), 'url': 'Extracting...'})
             self._save_tunnel_state()
             
             # Start URL extraction thread
-            url_thread = threading.Thread(target=self._extract_ngrok_url, args=(proc, 'ngrok'), daemon=True)
+            url_thread = threading.Thread(
+                target=self._extract_ngrok_url, 
+                args=(proc, 'ngrok'), 
+                daemon=True,
+                name=f"ngrok-extract-{port_int}"
+            )
             self.url_extraction_threads['ngrok'] = url_thread
             url_thread.start()
             
-            self._log('SUCCESS', f'ngrok started for tcp {port}.')
+            self._log('SUCCESS', f'ngrok started for tcp {port_int}.')
             return True
+        except FileNotFoundError:
+            self._log('ERROR', 'ngrok command not found')
+            return False
+        except PermissionError:
+            self._log('ERROR', 'Permission denied starting ngrok')
+            return False
         except Exception as e:
             self._log('ERROR', f'Failed to start ngrok: {e}')
             return False

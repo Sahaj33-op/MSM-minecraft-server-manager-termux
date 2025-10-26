@@ -50,12 +50,33 @@ def graceful_shutdown(signum=None, frame=None):
             cur = server_mgr.get_current_server()
             if cur and monitor is not None:
                 # Best-effort stop monitor threads before exit
-                monitor.stop_monitoring(cur)
+                try:
+                    monitor.stop_monitoring(cur)
+                except Exception as e:
+                    if logger:
+                        logger.log('WARNING', f'Error stopping monitoring: {e}')
+        
         # Stop the scheduler
         if global_scheduler is not None:
-            global_scheduler.stop()
-    except Exception:
-        pass
+            try:
+                global_scheduler.stop()
+            except Exception as e:
+                if logger:
+                    logger.log('WARNING', f'Error stopping scheduler: {e}')
+        
+        # Stop tunnel manager processes
+        if tunnel_mgr is not None:
+            try:
+                for tunnel_name in list(tunnel_mgr.tunnel_processes.keys()):
+                    tunnel_mgr.stop_tunnel(tunnel_name)
+            except Exception as e:
+                if logger:
+                    logger.log('WARNING', f'Error stopping tunnels: {e}')
+                    
+    except Exception as e:
+        if logger:
+            logger.log('ERROR', f'Error during shutdown: {e}')
+    
     if logger is not None:
         logger.log('INFO', "MSM shutting down.")
     sys.exit(0)
@@ -68,24 +89,38 @@ def init_system():
     """Initialize all system components including managers, database, logger, etc."""
     global logger, db, monitor, ui, server_mgr, world_mgr, tunnel_mgr, plugin_mgr, global_scheduler
 
-    ensure_infra()
-    logger = EnhancedLogger(LOG_FILE)
-    db = DatabaseManager(DB_FILE)
-    monitor = PerformanceMonitor(db, logger)
-    ui = UI()
+    try:
+        ensure_infra()
+        logger = EnhancedLogger(LOG_FILE)
+        db = DatabaseManager(DB_FILE)
+        monitor = PerformanceMonitor(db, logger)
+        ui = UI()
 
-    server_mgr = ServerManager(db, logger, monitor)
-    world_mgr = WorldManager(logger)
-    tunnel_mgr = TunnelManager(logger)
-    plugin_mgr = PluginManager(logger, ui)  # Initialize PluginManager
-    global_scheduler = scheduler.Scheduler(Path(CONFIG_DIR), logger, server_mgr, world_mgr)  # Initialize Scheduler
-    global_scheduler.start()  # Start the scheduler
+        server_mgr = ServerManager(db, logger, monitor)
+        world_mgr = WorldManager(logger)
+        tunnel_mgr = TunnelManager(logger)
+        plugin_mgr = PluginManager(logger, ui)  # Initialize PluginManager
+        global_scheduler = scheduler.Scheduler(Path(CONFIG_DIR), logger, server_mgr, world_mgr)  # Initialize Scheduler
+        
+        try:
+            global_scheduler.start()  # Start the scheduler
+        except Exception as e:
+            logger.log('ERROR', f'Failed to start scheduler: {e}')
+            # Continue without scheduler
 
-    # Select a default server if none set
-    cfg = ConfigManager.load()
-    if not cfg.get("current_server") and cfg.get("servers"):
-        first = list(cfg["servers"].keys())[0]
-        ConfigManager.set_current_server(first)
+        # Select a default server if none set
+        try:
+            cfg = ConfigManager.load()
+            if not cfg.get("current_server") and cfg.get("servers"):
+                first = list(cfg["servers"].keys())[0]
+                ConfigManager.set_current_server(first)
+        except Exception as e:
+            logger.log('WARNING', f'Failed to load/set default server: {e}')
+            
+    except Exception as e:
+        print(f"CRITICAL ERROR: Failed to initialize MSM: {e}")
+        print("Please check your system configuration and try again.")
+        sys.exit(1)
 
 def configure_menu():
     """Configuration menu for server settings"""

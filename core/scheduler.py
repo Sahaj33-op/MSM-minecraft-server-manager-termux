@@ -36,6 +36,7 @@ class Scheduler:
         self.running = False
         self.thread = None
         self.check_interval = 60 # Check every 60 seconds
+        self._lock = threading.Lock()  # Thread safety
 
     def _log(self, level: str, message: str):
         """Log a message using the logger or print to console.
@@ -256,3 +257,60 @@ class Scheduler:
                  self._log('ERROR', "ServerManager not available for restart task.")
         else:
             self._log('WARNING', f"Unknown scheduled task type: {task_type}")
+
+    def start(self):
+        """Start the scheduler thread."""
+        with self._lock:
+            if self.running:
+                self._log('WARNING', 'Scheduler is already running')
+                return
+            
+            self.running = True
+            self.thread = threading.Thread(
+                target=self._scheduler_loop,
+                daemon=True,
+                name="MSM-Scheduler"
+            )
+            self.thread.start()
+            self._log('INFO', 'Scheduler started')
+
+    def stop(self):
+        """Stop the scheduler thread."""
+        with self._lock:
+            if not self.running:
+                return
+            
+            self.running = False
+            if self.thread and self.thread.is_alive():
+                self.thread.join(timeout=5)
+                if self.thread.is_alive():
+                    self._log('WARNING', 'Scheduler thread did not stop gracefully')
+            self._log('INFO', 'Scheduler stopped')
+
+    def _scheduler_loop(self):
+        """Main scheduler loop that runs in a separate thread."""
+        self._log('INFO', 'Scheduler loop started')
+        
+        while self.running:
+            try:
+                now = datetime.now()
+                
+                for task in self.tasks:
+                    if self._should_run(task, now):
+                        try:
+                            self._execute_task(task)
+                            # Update last run time
+                            task['last_run_dt'] = now
+                            task['last_run'] = now.isoformat()
+                            self._save_schedule()
+                        except Exception as e:
+                            self._log('ERROR', f'Error executing task {task.get("id")}: {e}')
+                
+                # Sleep for the check interval
+                time.sleep(self.check_interval)
+                
+            except Exception as e:
+                self._log('ERROR', f'Error in scheduler loop: {e}')
+                time.sleep(self.check_interval)  # Continue despite errors
+        
+        self._log('INFO', 'Scheduler loop stopped')

@@ -10,6 +10,7 @@ import shutil
 import urllib.request
 import urllib.error  # Add this import
 import subprocess
+import psutil  # Add missing psutil import
 from pathlib import Path
 from typing import Optional, Dict, List
 
@@ -252,7 +253,11 @@ class ServerManager:
                 self.logger.log('SUCCESS', f'Server {current_server} started')
                 
                 # Log session start
-                self.current_session_id = self.db.log_session_start(current_server, flavor, version)
+                try:
+                    self.current_session_id = self.db.log_session_start(current_server, flavor, version)
+                except Exception as db_error:
+                    self.logger.log('ERROR', f'Failed to log session start: {db_error}')
+                    # Continue despite database error
                 
                 # Start monitoring
                 time.sleep(3) # Give server time to start
@@ -269,7 +274,11 @@ class ServerManager:
                      self.logger.log('WARNING', f'Could not reliably get PID for monitoring: {e}')
 
                 if pid > 0:
-                    self.monitor.start_monitoring(current_server, pid)
+                    try:
+                        self.monitor.start_monitoring(current_server, pid)
+                    except Exception as monitor_error:
+                        self.logger.log('ERROR', f'Failed to start monitoring: {monitor_error}')
+                        # Continue despite monitoring error
                 else:
                      self.logger.log('WARNING', 'Could not find server process PID for monitoring.')
 
@@ -277,8 +286,14 @@ class ServerManager:
             else:
                 self.logger.log('ERROR', f'Failed to start server in screen: {stderr}')
                 return False
+        except subprocess.SubprocessError as e:
+            self.logger.log('ERROR', f'Subprocess error starting server: {e}')
+            return False
+        except OSError as e:
+            self.logger.log('ERROR', f'OS error starting server: {e}')
+            return False
         except Exception as e:
-            self.logger.log('ERROR', f'Error starting server: {e}')
+            self.logger.log('ERROR', f'Unexpected error starting server: {e}')
             return False
     
     def _update_server_properties(self, server_name: str, settings: dict):
@@ -330,32 +345,48 @@ class ServerManager:
             self.logger.log('INFO', 'Server is not running')
             return False
         
-        # Send stop command
-        stop_cmd = ['screen', '-S', screen_name, '-X', 'stuff', 'stop\n']
-        returncode, stdout, stderr = run_command(stop_cmd)
-        
-        if returncode == 0:
-            # Wait for graceful shutdown
-            for _ in range(15):
-                if not is_screen_session_running(screen_name):
-                    break
-                time.sleep(1)
+        try:
+            # Send stop command
+            stop_cmd = ['screen', '-S', screen_name, '-X', 'stuff', 'stop\n']
+            returncode, stdout, stderr = run_command(stop_cmd)
+            
+            if returncode == 0:
+                # Wait for graceful shutdown
+                for _ in range(15):
+                    if not is_screen_session_running(screen_name):
+                        break
+                    time.sleep(1)
+                else:
+                    # Force quit if still running
+                    self.logger.log('WARNING', 'Server did not stop gracefully, forcing quit')
+                    force_cmd = ['screen', '-S', screen_name, '-X', 'quit']
+                    run_command(force_cmd)
+                
+                # Stop monitoring
+                try:
+                    self.monitor.stop_monitoring(current_server)
+                except Exception as monitor_error:
+                    self.logger.log('ERROR', f'Failed to stop monitoring: {monitor_error}')
+                
+                # Log session end
+                if self.current_session_id:
+                    try:
+                        self.db.log_session_end(self.current_session_id)
+                    except Exception as db_error:
+                        self.logger.log('ERROR', f'Failed to log session end: {db_error}')
+                    finally:
+                        self.current_session_id = None
+                
+                self.logger.log('SUCCESS', f'Server {current_server} stopped')
+                return True
             else:
-                # Force quit if still running
-                run_command(['screen', '-S', screen_name, '-X', 'quit'])
-            
-            # Stop monitoring
-            self.monitor.stop_monitoring(current_server)
-            
-            # Log session end
-            if self.current_session_id:
-                self.db.log_session_end(self.current_session_id)
-                self.current_session_id = None
-            
-            self.logger.log('SUCCESS', f'Server {current_server} stopped')
-            return True
-        else:
-            self.logger.log('ERROR', f'Failed to stop server: {stderr}')
+                self.logger.log('ERROR', f'Failed to stop server: {stderr}')
+                return False
+        except subprocess.SubprocessError as e:
+            self.logger.log('ERROR', f'Subprocess error stopping server: {e}')
+            return False
+        except Exception as e:
+            self.logger.log('ERROR', f'Unexpected error stopping server: {e}')
             return False
     
     def install_server_menu(self):

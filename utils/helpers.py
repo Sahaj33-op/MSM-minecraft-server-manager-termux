@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 def sanitize_input(value: str, max_length: int = 255) -> str:
-    """Enhanced input sanitization with length limits.
+    """Enhanced input sanitization with length limits and path traversal protection.
     
     Args:
         value: Input string to sanitize
@@ -25,7 +25,10 @@ def sanitize_input(value: str, max_length: int = 255) -> str:
     if not value or not isinstance(value, str):
         return f"server_{int(time.time())}"
     
+    # Security: Remove any path traversal attempts
+    value = value.replace('..', '').replace('/', '').replace('\\', '')
     value = os.path.basename(value)
+    
     if len(value) > max_length:
         value = value[:max_length]
     
@@ -35,6 +38,33 @@ def sanitize_input(value: str, max_length: int = 255) -> str:
     
     value = re.sub(r'\.{2,}', '.', value).strip('.-')
     return value if value else f"server_{int(time.time())}"
+
+def validate_path(path: str, base_path: str = None) -> bool:
+    """Validate that a path is safe and within allowed boundaries.
+    
+    Args:
+        path: Path to validate
+        base_path: Base path to check against (optional)
+        
+    Returns:
+        True if path is safe, False otherwise
+    """
+    try:
+        # Convert to absolute path
+        abs_path = os.path.abspath(path)
+        
+        # Check for path traversal
+        if '..' in path or path.startswith('/') or '\\' in path:
+            return False
+        
+        # If base_path is provided, ensure path is within it
+        if base_path:
+            base_abs = os.path.abspath(base_path)
+            return abs_path.startswith(base_abs)
+        
+        return True
+    except Exception:
+        return False
 
 def detect_total_ram_mb() -> int:
     """Detect total system RAM in MB.
@@ -93,7 +123,7 @@ def is_screen_session_running(session_name: str) -> bool:
         return False
 
 def run_command(command, cwd=None, timeout=None, capture_output=False) -> Tuple[int, str, str]:
-    """Run command with comprehensive error handling.
+    """Run command with comprehensive error handling and security measures.
     
     Args:
         command: Command to run (string or list)
@@ -106,15 +136,27 @@ def run_command(command, cwd=None, timeout=None, capture_output=False) -> Tuple[
     """
     try:
         if isinstance(command, str):
-            command = command.split()
+            # Security: Use shlex.split to properly handle quoted arguments
+            import shlex
+            command = shlex.split(command)
         
+        # Security: Validate command is not empty
+        if not command:
+            return -1, "", "Empty command provided"
+        
+        # Security: Validate first argument is not a shell metacharacter
+        if command[0] in ['&', '|', ';', '&&', '||', '>', '<', '`', '$', '(', ')']:
+            return -1, "", f"Invalid command: {command[0]}"
+        
+        # Security: Use subprocess.run with shell=False to prevent injection
         result = subprocess.run(
             command,
             cwd=cwd,
             timeout=timeout,
             capture_output=capture_output,
             text=True,
-            check=False
+            check=False,
+            shell=False  # Critical: Never use shell=True
         )
         
         return result.returncode, result.stdout or "", result.stderr or ""
@@ -122,8 +164,10 @@ def run_command(command, cwd=None, timeout=None, capture_output=False) -> Tuple[
         return -1, "", "Command timed out"
     except FileNotFoundError:
         return -1, "", f"Command not found: {command[0] if command else 'unknown'}"
+    except PermissionError:
+        return -1, "", f"Permission denied: {command[0] if command else 'unknown'}"
     except Exception as e:
-        return -1, "", str(e)
+        return -1, "", f"Command execution error: {str(e)}"
 
 def get_java_path(minecraft_version: str) -> Optional[str]:
     """Find appropriate Java executable for Minecraft version.
