@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional, Dict, List
 
 # Add imports for custom exceptions
-from core.exceptions import DownloadError, ConfigError
+from core.exceptions import DownloadError, ConfigError, APIError
 from core.config import ConfigManager
 from core.database import DatabaseManager
 from core.monitoring import PerformanceMonitor
@@ -387,8 +387,12 @@ class ServerManager:
         self.ui.print_info(f'Fetching {server_type_name} versions...')
         try:
             versions = api_class.get_versions()
-        except Exception as e:
+        except APIError as e:
             self.ui.print_error(f'Failed to fetch {server_type_name} versions: {e}')
+            input('Press Enter to continue...')
+            return
+        except Exception as e:
+            self.ui.print_error(f'Unexpected error fetching {server_type_name} versions: {e}')
             input('Press Enter to continue...')
             return
         
@@ -425,17 +429,34 @@ class ServerManager:
         
         # Download server with error handling
         try:
-            if self._download_server(current_server, server_type_name, api_class, selected_version, flavor_key):
-                self.ui.print_success(f'{server_type_name} {selected_version} installed successfully!')
-            else:
-                self.ui.print_error('Installation failed')
-        except Exception as e:
+            self._download_server(current_server, server_type_name, api_class, selected_version, flavor_key)
+            self.ui.print_success(f'{server_type_name} {selected_version} installed successfully!')
+        except DownloadError as e:
             self.ui.print_error(f'Installation failed: {e}')
+        except APIError as e:
+            self.ui.print_error(f'API error during installation: {e}')
+        except Exception as e:
+            self.ui.print_error(f'Unexpected error during installation: {e}')
         
         input('Press Enter to continue...')
     
     def _download_server(self, server_name: str, server_type: str, api_class, version: str, flavor_key: str) -> bool:
-        """Download and install server JAR or PHAR"""
+        """Download and install server JAR or PHAR
+        
+        Args:
+            server_name: Name of the server
+            server_type: Type of server (PaperMC, Purpur, etc.)
+            api_class: API class to use for downloading
+            version: Version to download
+            flavor_key: Flavor key for the server
+            
+        Returns:
+            True if download was successful, False otherwise
+            
+        Raises:
+            DownloadError: If download fails
+            APIError: If API call fails
+        """
         server_dir = get_server_directory(server_name)
         jar_path = None  # Initialize jar_path
         
@@ -448,225 +469,237 @@ class ServerManager:
                 # Paper-like and PocketMine APIs
                 build_info = api_class.get_latest_build(version)
                 if build_info:
-                    if flavor_key == "pocketmine":
-                        download_url = api_class.get_download_url(version, build_info)
-                        target_filename = build_info.get("filename", "PocketMine-MP.phar") # Use actual filename
-                    else: # Paper, Purpur, Folia
-                         build_num = build_info.get('build')
-                         download_url = api_class.get_download_url(version, build_num)
-            elif hasattr(api_class, 'get_loader_versions'):
-                # Fabric/Quilt APIs
-                loaders = api_class.get_loader_versions()
-                if loaders:
-                    download_url = api_class.get_download_url(version, loaders[0])
-                    target_filename = "server.jar" # Default for Fabric/Quilt
-            else:
+                    if hasattr(api_class, 'get_download_url'):
+                        if server_type == "PocketMine-MP":
+                            download_url = api_class.get_download_url(version)
+                            target_filename = "PocketMine-MP.phar"
+                        else:
+                            build_number = build_info.get('build')
+                            if build_number:
+                                download_url = api_class.get_download_url(version, build_number)
+                else:
+                    raise DownloadError(f"Failed to get build info for {server_type} {version}")
+            elif hasattr(api_class, 'get_download_url'):
                 # Vanilla API
                 download_url = api_class.get_download_url(version)
-                target_filename = "server.jar" # Default for Vanilla
-            
+                target_filename = "server.jar"
+
             if not download_url:
-                self.logger.log('ERROR', f'Could not get download URL for {server_type} {version}')
-                return False
+                raise DownloadError(f"Could not generate download URL for {server_type} {version}")
 
-            jar_path = server_dir / target_filename # Use the determined filename
+            # Download the file
+            jar_path = server_dir / target_filename
             
-            self.ui.print_info(f'Downloading {server_type} {version} to {jar_path}...')
+            self.logger.log('INFO', f'Downloading {server_type} {version} from {download_url}')
             
-            # Download with progress
-            def progress_hook(block_num, block_size, total_size):
-                if total_size > 0:
-                    percent = min(100, (block_num * block_size * 100) // total_size)
-                    print(f'\rProgress: {percent}%', end='', flush=True)
+            # Use a request with a user agent
+            req = urllib.request.Request(
+                download_url, 
+                headers={'User-Agent': 'MSM-Server-Manager'}
+            )
             
-            urllib.request.urlretrieve(download_url, jar_path, progress_hook) # Ensure progress_hook is defined as before
-            print() # New line after progress
-
+            with urllib.request.urlopen(req, timeout=300) as response:  # 5 minute timeout
+                with open(jar_path, 'wb') as f:
+                    shutil.copyfileobj(response, f)
+            
             # Verify download
             if not jar_path.exists() or jar_path.stat().st_size == 0:
-                # Raise specific exception
-                raise DownloadError("Download verification failed (file missing or empty)")
+                raise DownloadError(f"Download failed or resulted in empty file for {server_type} {version}")
 
-            # Update server config
+            # Save server configuration
             server_config = ConfigManager.load_server_config(server_name)
-            server_config['server_flavor'] = flavor_key
-            server_config['server_version'] = version
-            # Add build info if available (useful for Paper/Purpur/Folia/PocketMine)
-            if build_info and build_info.get('build'):
-                 server_config['server_build'] = build_info.get('build')
-            # Set default port based on type
-            server_config.setdefault('server_settings', {})['port'] = 19132 if flavor_key == "pocketmine" else 25565
-
+            server_config.update({
+                'server_flavor': flavor_key,
+                'server_version': version,
+                'server_build': build_info.get('build') if build_info else None,
+                'server_settings': server_config.get('server_settings', {})
+            })
+            
+            # Set default port based on server type
+            if 'server_settings' in server_config:
+                if server_type == "PocketMine-MP":
+                    server_config['server_settings']['port'] = 19132  # Default Bedrock port
+                else:
+                    server_config['server_settings']['port'] = 25565  # Default Java port
+            
             ConfigManager.save_server_config(server_name, server_config)
             
-            self.logger.log('SUCCESS', f'Installed {server_type} {version} for {server_name}')
+            self.logger.log('SUCCESS', f'Downloaded {server_type} {version} successfully')
             return True
             
         except urllib.error.URLError as e:
-             raise DownloadError(f"Network error during download: {e}") from e
-        except ConfigError as e: # If save_server_config raises it
-             raise ConfigError(f"Failed to save config after download: {e}") from e
-        except DownloadError as e: # Catch specific verification error
-             self.logger.log('ERROR', str(e))
-             # Clean up empty file if possible
-             if jar_path and jar_path.exists():
-                 try:
-                     jar_path.unlink()
-                 except OSError:
-                     pass # Ignore cleanup errors
-             return False # Return bool for flow control
+            # Clean up partial download
+            if jar_path and jar_path.exists():
+                jar_path.unlink()
+            raise DownloadError(f"Network error downloading {server_type} {version}: {e}") from e
         except Exception as e:
-            # Catch broader exceptions but raise a specific DownloadError
-            raise DownloadError(f"Unexpected download failure: {e}") from e
-    
-    def show_statistics(self):
-        """Display server statistics"""
-        current_server = self.get_current_server()
-        if not current_server:
-            self.ui.print_error('No server selected')
-            return
-        
-        stats = self.db.get_server_statistics(current_server)
-        
-        self.ui.clear_screen()
-        self.ui.print_header()
-        print(f"{self.ui.colors.BOLD}Statistics for: {current_server}{self.ui.colors.RESET}\n")
-        
-        def format_duration(seconds):
-            if not seconds:
-                return "N/A"
-            seconds = int(seconds)
-            days, remainder = divmod(seconds, 86400)
-            hours, remainder = divmod(remainder, 3600)
-            minutes, _ = divmod(remainder, 60)
-            return f"{days}d {hours}h {minutes}m"
-        
-        print(f"  Total Sessions:    {self.ui.colors.CYAN}{stats.get('total_sessions', 0)}{self.ui.colors.RESET}")
-        print(f"  Total Uptime:      {self.ui.colors.CYAN}{format_duration(stats.get('total_uptime'))}{self.ui.colors.RESET}")
-        print(f"  Average Session:   {self.ui.colors.CYAN}{format_duration(stats.get('avg_duration'))}{self.ui.colors.RESET}")
-        print(f"  Total Crashes:     {self.ui.colors.YELLOW}{stats.get('total_crashes', 0)}{self.ui.colors.RESET}")
-        print(f"  Total Restarts:    {self.ui.colors.YELLOW}{stats.get('total_restarts', 0)}{self.ui.colors.RESET}")
-        
-        print("\n  --- 24-Hour Performance ---")
-        print(f"  Avg RAM Usage:     {self.ui.colors.CYAN}{stats.get('avg_ram_usage_24h', 0):.2f}%{self.ui.colors.RESET}")
-        print(f"  Avg CPU Usage:     {self.ui.colors.CYAN}{stats.get('avg_cpu_usage_24h', 0):.2f}%{self.ui.colors.RESET}")
-        print(f"  Peak Players:      {self.ui.colors.CYAN}{stats.get('peak_players_24h', 0)}{self.ui.colors.RESET}")
-        
-        input('\nPress Enter to continue...')
-    
+            # Clean up partial download
+            if jar_path and jar_path.exists():
+                jar_path.unlink()
+            # Re-raise specific exceptions or wrap generic ones
+            if isinstance(e, (DownloadError, APIError)):
+                raise
+            else:
+                raise DownloadError(f"Failed to download {server_type} {version}: {e}") from e
+
     def show_console(self):
-        """Attach to server console"""
+        """Show server console by attaching to the screen session."""
         current_server = self.get_current_server()
         if not current_server:
-            self.ui.print_error('No server selected')
-            return
+            self.logger.log('ERROR', 'No server selected')
+            return False
         
         screen_name = get_screen_session_name(current_server)
         
         if not is_screen_session_running(screen_name):
-            self.ui.print_error('Server is not running')
-            input('Press Enter to continue...')
-            return
+            self.logger.log('ERROR', f'Server {current_server} is not running')
+            return False
         
-        self.ui.print_info(f'Attaching to {current_server} console...')
-        self.ui.print_info('Press Ctrl+A, then D to detach')
-        input('Press Enter to attach...')
-        
-        os.system(f'screen -r {screen_name}')
-    
-    def configure_server_menu(self):
-        """Complete configuration menu with 16+ server.properties settings"""
+        # Attach to the screen session
+        try:
+            # This will attach to the screen session and give control to the user
+            # When they detach (Ctrl+A, D), control will return to our program
+            attach_cmd = ['screen', '-r', screen_name]
+            self.logger.log('INFO', f'Attaching to server console for {current_server}. Press Ctrl+A then D to detach.')
+            subprocess.run(attach_cmd)
+            return True
+        except Exception as e:
+            self.logger.log('ERROR', f'Failed to attach to server console: {e}')
+            return False
+
+    def show_performance_dashboard(self):
+        """Display live performance metrics for the current server."""
         current_server = self.get_current_server()
         if not current_server:
-            self.ui.print_error('No server selected')
-            input('Press Enter to continue...')
-            return
-        
-        server_config = ConfigManager.load_server_config(current_server)
-        settings = server_config.get('server_settings', {})
-        
-        self.ui.clear_screen()
-        self.ui.print_header()
-        print(f"{self.ui.colors.BOLD}Configure Server: {current_server}{self.ui.colors.RESET}\n")
-        
-        # Display current settings
-        print("Current Settings:")
-        for setting in self.SERVER_PROPERTIES_SETTINGS:
-            current_value = settings.get(setting, 'Not set')
-            print(f"  {setting}: {current_value}")
-        
-        print("\nOptions:")
-        print(" 1. Edit setting")
-        print(" 2. Reset to defaults")
-        print(" 0. Back")
-        
-        choice = input(f"\n{self.ui.colors.YELLOW}Select option: {self.ui.colors.RESET}").strip()
-        
-        if choice == "1":
-            self._edit_server_setting(current_server, settings)
-        elif choice == "2":
-            self._reset_server_settings(current_server)
-        
-        input('Press Enter to continue...')
-    
-    def _edit_server_setting(self, server_name: str, settings: dict):
-        """Edit a specific server setting"""
-        print("\nAvailable settings to edit:")
-        for i, setting in enumerate(self.SERVER_PROPERTIES_SETTINGS, 1):
-            print(f" {i}. {setting}")
-        
+            self.logger.log('ERROR', 'No server selected')
+            return False
+
+        screen_name = get_screen_session_name(current_server)
+
+        if not is_screen_session_running(screen_name):
+            self.logger.log('WARNING', f"Server '{current_server}' is not running.")
+            return False
+
+        self.logger.log('INFO', f"Starting performance dashboard for {current_server}")
+        print(f"Starting Performance Dashboard for '{current_server}'... Press Ctrl+C to exit.")
+        time.sleep(2)
+
         try:
-            selection = int(input(f"\n{self.ui.colors.YELLOW}Select setting to edit (1-{len(self.SERVER_PROPERTIES_SETTINGS)}): {self.ui.colors.RESET}").strip())
-            if 1 <= selection <= len(self.SERVER_PROPERTIES_SETTINGS):
-                setting_name = self.SERVER_PROPERTIES_SETTINGS[selection - 1]
-                current_value = settings.get(setting_name, '')
-                new_value = input(f"Enter new value for {setting_name} [{current_value}]: ").strip()
-                
-                if new_value:
-                    # Convert to appropriate type
-                    if setting_name in ['port', 'max-players', 'view-distance', 'max-world-size', 'player-idle-timeout']:
-                        try:
-                            new_value = int(new_value)
-                        except ValueError:
-                            self.ui.print_error('Invalid number')
-                            return
-                    elif setting_name in ['pvp', 'white-list', 'online-mode', 'allow-flight', 'spawn-animals', 'spawn-monsters', 'spawn-npcs', 'enable-command-block']:
-                        new_value = new_value.lower() in ['true', '1', 'yes', 'on']
-                    
-                    settings[setting_name] = new_value
-                    server_config = ConfigManager.load_server_config(server_name)
-                    server_config['server_settings'] = settings
-                    ConfigManager.save_server_config(server_name, server_config)
-                    self.ui.print_success(f'Updated {setting_name} to {new_value}')
-            else:
-                self.ui.print_error('Invalid selection')
-        except ValueError:
-            self.ui.print_error('Invalid input')
-    
-    def _reset_server_settings(self, server_name: str):
-        """Reset server settings to defaults"""
-        confirm = input(f"{self.ui.colors.YELLOW}Are you sure you want to reset all settings to defaults? (y/N): {self.ui.colors.RESET}").strip().lower()
-        if confirm == 'y':
-            server_config = ConfigManager.load_server_config(server_name)
-            server_config['server_settings'] = {
-                'motd': f'{server_name} Server',
-                'port': 25565,
-                'max-players': 20,
-                'gamemode': 'survival',
-                'difficulty': 'normal',
-                'pvp': True,
-                'white-list': False,
-                'view-distance': 10,
-                'online-mode': True,
-                'allow-flight': False,
-                'spawn-animals': True,
-                'spawn-monsters': True,
-                'spawn-npcs': True,
-                'enable-command-block': False,
-                'max-world-size': 29999984,
-                'player-idle-timeout': 0,
-                'level-type': 'default',
-                'level-name': 'world'
-            }
-            ConfigManager.save_server_config(server_name, server_config)
-            self.ui.print_success('Settings reset to defaults')
+            pid = 0
+            server_process = None
+
+            # Find the screen process PID more reliably
+            try:
+                result = run_command(['screen', '-ls'], capture_output=True)
+                if result[0] == 0:
+                    match = re.search(rf'(\d+)\.{screen_name}\s', result[1])
+                    if match:
+                        pid = int(match.group(1))
+                        # Find the actual Java/PHP child process if possible (more accurate)
+                        parent = psutil.Process(pid)
+                        children = parent.children(recursive=True)
+                        # Look for java or php process among children
+                        for child in children:
+                            if child.name().lower() in ['java', 'php']:
+                                server_process = child
+                                break
+                        if not server_process:  # Fallback to screen process if child not found
+                            server_process = parent
+                if not server_process:
+                    self.logger.log('WARNING', "Could not find server process PID. Displaying limited info.")
+
+            except Exception as e:
+                self.logger.log('WARNING', f'Could not reliably get PID for monitoring: {e}')
+                self.logger.log('WARNING', "Could not find server process PID. Displaying limited info.")
+
+            while True:
+                print(f"Performance Dashboard: {current_server} (Press Ctrl+C to exit)\n")
+
+                cpu_percent = "N/A"
+                mem_percent = "N/A"
+                mem_rss_mb = "N/A"
+
+                # Get metrics if process found
+                if server_process:
+                    try:
+                        if server_process.is_running():
+                            with server_process.oneshot():
+                                cpu_percent = f"{server_process.cpu_percent():.1f}%"
+                                mem_info = server_process.memory_info()
+                                mem_rss_mb = f"{mem_info.rss / (1024 * 1024):.1f} MB"
+                                # psutil memory_percent can be misleading in containers/proot, RSS is often better
+                                # mem_percent = f"{server_process.memory_percent():.1f}%"
+                        else:
+                            self.logger.log('WARNING', "Server process stopped running.")
+                            break  # Exit dashboard loop
+                    except psutil.NoSuchProcess:
+                        self.logger.log('WARNING', "Server process disappeared.")
+                        break  # Exit dashboard loop
+                    except Exception as e:
+                        self.logger.log('ERROR', f"Error getting process stats: {e}")
+                        cpu_percent = "Error"
+                        mem_rss_mb = "Error"
+
+                print(f"  CPU Usage:  {cpu_percent}")
+                print(f"  RAM Usage:  {mem_rss_mb}")
+                # print(f"  RAM Percent: {mem_percent}")  # Optional
+
+                # --- Optional: Attempt to parse TPS and Players from log ---
+                # Note: This is less reliable than RCON or server plugins
+                tps_info = "N/A (Log parsing)"
+                player_count = "N/A (Log parsing)"
+                try:
+                    server_path = get_server_directory(current_server)
+                    log_file = server_path / "logs" / "latest.log"
+                    if log_file.exists():
+                        with open(log_file, "r", errors='ignore') as f:
+                            # Read last ~200 lines for recent info
+                            lines = f.readlines()[-200:]
+
+                        # Simple TPS parsing (adjust regex based on server type/plugins)
+                        tps_found = False
+                        for line in reversed(lines):
+                            # Example regex for Paper/Spigot TPS:
+                            tps_match = re.search(r'TPS from last 1m, 5m, 15m:\s*\*([\d\.]+),\s*([\d\.]+),\s*([\d\.]+)', line)
+                            if tps_match:
+                                tps_info = f"{float(tps_match.group(1)):.1f} (1m)"
+                                tps_found = True
+                                break
+                        if not tps_found:
+                            # Fallback for simpler messages if needed
+                            pass
+
+                        # Simple Player count parsing (very basic)
+                        players = set()
+                        for line in lines:
+                            join_match = re.search(r'\]:\s*(\w+)\[.*logged in', line)
+                            quit_match = re.search(r'\]:\s*(\w+)\s*left the game', line)
+                            disc_match = re.search(r'\]:\s*(\w+)\s*lost connection', line)
+                            if join_match:
+                                players.add(join_match.group(1))
+                            elif quit_match:
+                                players.discard(quit_match.group(1))
+                            elif disc_match:
+                                players.discard(disc_match.group(1))
+                        player_count = str(len(players))
+
+                except Exception as e:
+                    self.logger.log('DEBUG', f"Failed to parse log for TPS/Players: {e}")
+                    tps_info = "Error parsing log"
+                    player_count = "Error parsing log"
+
+                print(f"  TPS (est.): {tps_info}")
+                print(f"  Players:    {player_count}")
+                # --- End Optional Parsing ---
+
+                time.sleep(5)  # Refresh interval
+
+        except KeyboardInterrupt:
+            self.logger.log('INFO', "Performance dashboard stopped by user.")
+            print("\nExiting dashboard...")
+            time.sleep(1)
+            return True
+        except Exception as e:
+            self.logger.log('ERROR', f"Error in performance dashboard: {e}")
+            print(f"Dashboard error: {e}")
+            return False

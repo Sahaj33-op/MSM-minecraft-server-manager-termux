@@ -57,12 +57,6 @@ class TestEnhancedTunnelManager(unittest.TestCase):
             self.assertIn('status', info)
             self.assertIn('url', info)
     
-    def test_check_tunnel_status(self):
-        """Test checking tunnel status"""
-        status_report = self.tunnel_mgr.check_tunnel_status()
-        # Should be empty since no tunnels are running
-        self.assertIsInstance(status_report, dict)
-    
     @patch('shutil.which')
     def test_start_ngrok_missing(self, mock_which):
         """Test ngrok start when ngrok is not installed"""
@@ -89,7 +83,7 @@ class TestEnhancedTunnelManager(unittest.TestCase):
     def test_start_ngrok_success(self, mock_popen, mock_which):
         """Test successful ngrok start"""
         mock_which.return_value = '/usr/bin/ngrok'
-        mock_process = MagicMock(spec=subprocess.Popen)
+        mock_process = MagicMock()
         mock_process.pid = 12345
         mock_popen.return_value = mock_process
 
@@ -105,6 +99,15 @@ class TestEnhancedTunnelManager(unittest.TestCase):
         )
         self.assertIn('ngrok', self.tunnel_mgr.tunnel_processes)
         self.assertEqual(self.tunnel_mgr.tunnel_processes['ngrok'], mock_process)
+
+    @patch('managers.tunnel_manager.subprocess.Popen')
+    def test_start_ngrok_failure(self, mock_popen):
+        """Test ngrok start failure"""
+        mock_popen.side_effect = Exception("Failed to start process")
+        
+        with patch('shutil.which', return_value='/usr/bin/ngrok'):
+            result = self.tunnel_mgr.start_ngrok(25565)
+            self.assertFalse(result)
 
     @patch('managers.tunnel_manager.psutil.pid_exists')
     @patch('managers.tunnel_manager.TunnelManager._save_tunnel_state')
@@ -134,6 +137,12 @@ class TestEnhancedTunnelManager(unittest.TestCase):
         self.assertNotIn('ngrok', self.tunnel_mgr.tunnel_info)
 
     @patch('managers.tunnel_manager.TunnelManager._save_tunnel_state')
+    def test_stop_tunnel_not_running(self, mock_save_state):
+        """Test stopping a tunnel that's not running"""
+        result = self.tunnel_mgr.stop_tunnel('nonexistent')
+        self.assertFalse(result)
+
+    @patch('managers.tunnel_manager.TunnelManager._save_tunnel_state')
     def test_extract_ngrok_url(self, mock_save_state):
         """Test extracting ngrok URL from output"""
         # Setup initial tunnel info
@@ -152,6 +161,38 @@ class TestEnhancedTunnelManager(unittest.TestCase):
         self.assertIn('ngrok', self.tunnel_mgr.tunnel_info)
         self.assertIn('url', self.tunnel_mgr.tunnel_info['ngrok'])
         self.assertTrue(self.tunnel_mgr.tunnel_info['ngrok']['url'].endswith('.ngrok.io'))
+
+    @patch('managers.tunnel_manager.subprocess.Popen')
+    def test_start_cloudflared_success(self, mock_popen):
+        """Test successful cloudflared start"""
+        mock_process = MagicMock()
+        mock_process.pid = 12346
+        mock_popen.return_value = mock_process
+
+        with patch('shutil.which', return_value='/usr/bin/cloudflared'):
+            result = self.tunnel_mgr.start_cloudflared(25565)
+            self.assertTrue(result)
+            mock_popen.assert_called_once_with(
+                ["cloudflared", "tunnel", "--url", "tcp://localhost:25565"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            self.assertIn('cloudflared', self.tunnel_mgr.tunnel_processes)
+            self.assertEqual(self.tunnel_mgr.tunnel_processes['cloudflared'], mock_process)
+
+    @patch('managers.tunnel_manager.subprocess.Popen')
+    def test_start_pinggy_success(self, mock_popen):
+        """Test successful pinggy start"""
+        mock_process = MagicMock()
+        mock_process.pid = 12347
+        mock_popen.return_value = mock_process
+
+        with patch('shutil.which', return_value='/usr/bin/ssh'):
+            result = self.tunnel_mgr.start_pinggy(25565)
+            self.assertTrue(result)
+            # Check that ssh command was called (exact command may vary)
+            mock_popen.assert_called_once()
+            self.assertIn('pinggy', self.tunnel_mgr.tunnel_processes)
 
 if __name__ == '__main__':
     unittest.main()

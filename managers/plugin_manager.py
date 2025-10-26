@@ -5,10 +5,13 @@ Plugin Manager - Handles listing, installing, enabling/disabling plugins.
 import os
 import shutil
 import urllib.request
+import urllib.error
 import urllib.parse
 from pathlib import Path
 from typing import List, Tuple, Optional
 
+# Import custom exceptions
+from core.exceptions import PluginError, DownloadError
 # Assume logger and UI are passed or imported
 # from core.logger import EnhancedLogger
 # from ui.interface import UI
@@ -51,14 +54,17 @@ class PluginManager:
         else:
             print(message)
 
-    def _get_plugins_dir(self, server_name: str) -> Optional[Path]:
+    def _get_plugins_dir(self, server_name: str) -> Path:
         """Gets the plugins directory path for a server.
         
         Args:
             server_name: Name of the server
             
         Returns:
-            Path to the plugins directory or None if not supported
+            Path to the plugins directory
+            
+        Raises:
+            PluginError: If server flavor is not supported for plugins
         """
         server_path = get_server_directory(server_name)
         # Check if server is Java-based (simple check for now)
@@ -69,9 +75,10 @@ class PluginManager:
              plugins_dir.mkdir(exist_ok=True)
              return plugins_dir
         else:
-             self._log('WARNING', f'Plugin management not supported for server flavor: {flavor}')
+             error_msg = f'Plugin management not supported for server flavor: {flavor}'
+             self._log('WARNING', error_msg)
              self._print_ui('print_warning', f'Plugins are not supported for server type: {flavor}')
-             return None
+             raise PluginError(error_msg)
 
     def _load_server_config(self, server_name: str) -> dict:
         """Helper to load server config (needs ConfigManager).
@@ -99,9 +106,13 @@ class PluginManager:
             
         Returns:
             List of tuples containing (plugin_name, is_enabled)
+            
+        Raises:
+            PluginError: If plugin directory cannot be accessed
         """
-        plugins_dir = self._get_plugins_dir(server_name)
-        if not plugins_dir:
+        try:
+            plugins_dir = self._get_plugins_dir(server_name)
+        except PluginError:
             return []
 
         plugins = []
@@ -116,9 +127,10 @@ class PluginManager:
                          plugins.append((plugin_name, False)) # Disabled
             return sorted(plugins, key=lambda p: p[0].lower()) # Sort alphabetically
         except Exception as e:
-            self._log('ERROR', f"Failed to list plugins for {server_name}: {e}")
+            error_msg = f"Failed to list plugins for {server_name}: {e}"
+            self._log('ERROR', error_msg)
             self._print_ui('print_error', f"Error listing plugins: {e}")
-            return []
+            raise PluginError(error_msg) from e
 
     def install_plugin(self, server_name: str, source: str) -> bool:
         """Install a plugin from a URL or local path.
@@ -129,11 +141,16 @@ class PluginManager:
             
         Returns:
             True if plugin was installed successfully, False otherwise
+            
+        Raises:
+            PluginError: If installation fails
+            DownloadError: If download fails
         """
-        plugins_dir = self._get_plugins_dir(server_name)
-        if not plugins_dir:
-            return False
-
+        try:
+            plugins_dir = self._get_plugins_dir(server_name)
+        except PluginError as e:
+            raise
+            
         source_path = Path(source)
         filename = "plugin.jar"  # Default filename
         
@@ -155,37 +172,40 @@ class PluginManager:
                 self._log('INFO', f"Downloading plugin from {source} to {target_path}...")
                 self._print_ui('print_info', f"Downloading {filename}...")
                 
-                # Simple download with progress
-                def progress_hook(block_num, block_size, total_size):
-                    downloaded = block_num * block_size
-                    percent = min(100, (downloaded * 100) // total_size if total_size > 0 else 0)
-                    print(f'\rDownloading: {percent}%', end='', flush=True)
-
                 # Use urlopen instead of urlretrieve for better control
                 req = urllib.request.Request(source, headers={'User-Agent': 'MSM-Plugin-Manager'})
                 with urllib.request.urlopen(req, timeout=30) as response:
                     with open(target_path, 'wb') as f:
                         shutil.copyfileobj(response, f)
-                print() # New line after progress
                 
                 if not target_path.exists() or target_path.stat().st_size == 0:
-                     raise Exception("Download failed or resulted in empty file.")
+                     raise DownloadError("Download failed or resulted in empty file.")
 
                 self._print_ui('print_success', f"Plugin '{filename}' downloaded successfully.")
                 return True
             else:
-                self._log('ERROR', f"Invalid source (not a local .jar file or valid URL): {source}")
+                error_msg = f"Invalid source (not a local .jar file or valid URL): {source}"
+                self._log('ERROR', error_msg)
                 self._print_ui('print_error', "Invalid source. Must be a URL or a local .jar file path.")
-                return False
-        except Exception as e:
-            self._log('ERROR', f"Failed to install plugin from {source}: {e}")
-            self._print_ui('print_error', f"Failed to install plugin: {e}")
+                raise PluginError(error_msg)
+        except urllib.error.URLError as e:
             # Clean up potentially incomplete download
             target_path = plugins_dir / filename
             if target_path.exists():
                  try: target_path.unlink()
                  except OSError: pass
-            return False
+            raise DownloadError(f"Failed to download plugin from {source}: {e}") from e
+        except Exception as e:
+            # Clean up potentially incomplete download
+            target_path = plugins_dir / filename
+            if target_path.exists():
+                 try: target_path.unlink()
+                 except OSError: pass
+            # Re-raise specific exceptions or wrap generic ones
+            if isinstance(e, (PluginError, DownloadError)):
+                raise
+            else:
+                raise PluginError(f"Failed to install plugin from {source}: {e}") from e
 
     def _find_plugin_file(self, plugins_dir: Path, plugin_name: str) -> Optional[Path]:
         """Finds the .jar or .jar.disabled file for a plugin name.
@@ -228,17 +248,19 @@ class PluginManager:
             
         Returns:
             True if plugin was enabled successfully, False otherwise
+            
+        Raises:
+            PluginError: If enabling fails
         """
         plugins_dir = self._get_plugins_dir(server_name)
-        if not plugins_dir:
-            return False
 
         plugin_file = self._find_plugin_file(plugins_dir, plugin_name)
 
         if not plugin_file:
-            self._log('ERROR', f"Plugin '{plugin_name}' not found in {server_name}.")
+            error_msg = f"Plugin '{plugin_name}' not found in {server_name}."
+            self._log('ERROR', error_msg)
             self._print_ui('print_error', f"Plugin '{plugin_name}' not found.")
-            return False
+            raise PluginError(error_msg)
             
         if plugin_file.suffix == '.jar':
              self._print_ui('print_info', f"Plugin '{plugin_name}' is already enabled.")
@@ -252,13 +274,15 @@ class PluginManager:
                 self._print_ui('print_success', f"Plugin '{plugin_name}' enabled.")
                 return True
             except Exception as e:
-                self._log('ERROR', f"Failed to enable plugin '{plugin_name}': {e}")
+                error_msg = f"Failed to enable plugin '{plugin_name}': {e}"
+                self._log('ERROR', error_msg)
                 self._print_ui('print_error', f"Failed to enable plugin: {e}")
-                return False
+                raise PluginError(error_msg) from e
         else:
-             self._log('ERROR', f"Unexpected file type found for plugin '{plugin_name}': {plugin_file.name}")
+             error_msg = f"Unexpected file type found for plugin '{plugin_name}': {plugin_file.name}"
+             self._log('ERROR', error_msg)
              self._print_ui('print_error', "Found unexpected file type for plugin.")
-             return False
+             raise PluginError(error_msg)
 
     def disable_plugin(self, server_name: str, plugin_name: str) -> bool:
         """Disable an enabled plugin by renaming.
@@ -269,17 +293,19 @@ class PluginManager:
             
         Returns:
             True if plugin was disabled successfully, False otherwise
+            
+        Raises:
+            PluginError: If disabling fails
         """
         plugins_dir = self._get_plugins_dir(server_name)
-        if not plugins_dir:
-            return False
 
         plugin_file = self._find_plugin_file(plugins_dir, plugin_name)
 
         if not plugin_file:
-            self._log('ERROR', f"Plugin '{plugin_name}' not found in {server_name}.")
+            error_msg = f"Plugin '{plugin_name}' not found in {server_name}."
+            self._log('ERROR', error_msg)
             self._print_ui('print_error', f"Plugin '{plugin_name}' not found.")
-            return False
+            raise PluginError(error_msg)
             
         if plugin_file.suffixes == ['.jar', '.disabled']:
              self._print_ui('print_info', f"Plugin '{plugin_name}' is already disabled.")
@@ -293,13 +319,15 @@ class PluginManager:
                 self._print_ui('print_success', f"Plugin '{plugin_name}' disabled.")
                 return True
             except Exception as e:
-                self._log('ERROR', f"Failed to disable plugin '{plugin_name}': {e}")
+                error_msg = f"Failed to disable plugin '{plugin_name}': {e}"
+                self._log('ERROR', error_msg)
                 self._print_ui('print_error', f"Failed to disable plugin: {e}")
-                return False
+                raise PluginError(error_msg) from e
         else:
-             self._log('ERROR', f"Unexpected file type found for plugin '{plugin_name}': {plugin_file.name}")
+             error_msg = f"Unexpected file type found for plugin '{plugin_name}': {plugin_file.name}"
+             self._log('ERROR', error_msg)
              self._print_ui('print_error', "Found unexpected file type for plugin.")
-             return False
+             raise PluginError(error_msg)
 
     def delete_plugin(self, server_name: str, plugin_name: str) -> bool:
         """Delete a plugin.
@@ -310,17 +338,19 @@ class PluginManager:
             
         Returns:
             True if plugin was deleted successfully, False otherwise
+            
+        Raises:
+            PluginError: If deletion fails
         """
         plugins_dir = self._get_plugins_dir(server_name)
-        if not plugins_dir:
-            return False
 
         plugin_file = self._find_plugin_file(plugins_dir, plugin_name)
 
         if not plugin_file:
-            self._log('ERROR', f"Plugin '{plugin_name}' not found in {server_name}.")
+            error_msg = f"Plugin '{plugin_name}' not found in {server_name}."
+            self._log('ERROR', error_msg)
             self._print_ui('print_error', f"Plugin '{plugin_name}' not found.")
-            return False
+            raise PluginError(error_msg)
 
         try:
             plugin_file.unlink()
@@ -328,6 +358,7 @@ class PluginManager:
             self._print_ui('print_success', f"Plugin '{plugin_name}' deleted.")
             return True
         except Exception as e:
-            self._log('ERROR', f"Failed to delete plugin '{plugin_name}': {e}")
+            error_msg = f"Failed to delete plugin '{plugin_name}': {e}"
+            self._log('ERROR', error_msg)
             self._print_ui('print_error', f"Failed to delete plugin: {e}")
-            return False
+            raise PluginError(error_msg) from e
