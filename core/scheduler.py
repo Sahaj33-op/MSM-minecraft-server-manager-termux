@@ -213,12 +213,16 @@ class Scheduler:
 
     def _execute_task(self, task: Dict):
         """Execute the scheduled task.
-        
+
         Args:
             task: Task dictionary to execute
         """
         task_type = task.get("type")
         server_name = task.get("server")
+
+        if not server_name:
+            self._log('ERROR', "Server name is None for scheduled task.")
+            return
 
         self._log('INFO', f"Executing scheduled task for {server_name}: {task_type}")
 
@@ -228,11 +232,8 @@ class Scheduler:
                  # Need server path - requires helper function or ConfigManager access
                  try:
                       from utils.helpers import get_server_directory # Local import
-                      if server_name:  # Check if server_name is not None
-                          server_path = get_server_directory(server_name)
-                          success = self.world_manager.create_backup(server_name, server_path)
-                      else:
-                          self._log('ERROR', "Server name is None for backup task.")
+                      server_path = get_server_directory(server_name)
+                      success = self.world_manager.create_backup(server_name, server_path)
                  except ImportError:
                       self._log('ERROR', "Cannot execute backup: utils.helpers not found.")
                  except Exception as e:
@@ -242,8 +243,13 @@ class Scheduler:
         elif task_type == "restart":
             if self.server_manager:
                  try:
+                      # Save current server context and switch to target server
+                      original_server = self.server_manager.get_current_server()
+                      if original_server != server_name:
+                          self.server_manager.set_current_server(server_name)
+
                       self._log('INFO', f"Stopping server {server_name} for scheduled restart...")
-                      stopped = self.server_manager.stop_server(force_after_timeout=True) # Add optional force
+                      stopped = self.server_manager.stop_server()
                       if stopped:
                            self._log('INFO', "Waiting briefly before restarting...")
                            time.sleep(10)
@@ -251,6 +257,10 @@ class Scheduler:
                            success = self.server_manager.start_server()
                       else:
                            self._log('ERROR', f"Failed to stop server {server_name} for restart.")
+
+                      # Restore original server context if different
+                      if original_server and original_server != server_name:
+                          self.server_manager.set_current_server(original_server)
                  except Exception as e:
                       self._log('ERROR', f"Error during scheduled restart: {e}")
             else:

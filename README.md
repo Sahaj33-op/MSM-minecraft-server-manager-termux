@@ -1,6 +1,6 @@
 # Minecraft Server Manager (MSM)
 
-A production-grade command-line application for managing multiple Minecraft servers on Termux/Android devices. MSM provides comprehensive server lifecycle management, real-time performance monitoring, automated scheduling, and support for seven distinct server platforms.
+A production-grade command-line application for managing multiple Minecraft servers on Termux (Android). MSM provides comprehensive server lifecycle management, real-time performance monitoring, automated scheduling, and support for seven distinct server platforms.
 
 ---
 
@@ -87,8 +87,13 @@ A production-grade command-line application for managing multiple Minecraft serv
 ## System Requirements
 
 ### Platform
-- Android device with Termux installed
-- Alternatively: Linux, macOS, or Windows with Python 3.7+
+- Android device with Termux installed (F-Droid recommended)
+- Termux environment with storage access configured (`termux-setup-storage`)
+
+### Termux Environment
+- **PREFIX**: `/data/data/com.termux/files/usr`
+- **HOME**: `/data/data/com.termux/files/home`
+- Uses Bionic libc (Android's C library)
 
 ### Dependencies
 
@@ -113,9 +118,15 @@ psutil>=5.9.0
 
 ## Installation
 
-### Termux Installation
+### Termux Setup
 
 ```bash
+# Install Termux from F-Droid (recommended over Play Store)
+# https://f-droid.org/packages/com.termux/
+
+# Grant storage access (required for external storage)
+termux-setup-storage
+
 # Update package repositories
 pkg update && pkg upgrade -y
 
@@ -136,20 +147,19 @@ pip install -r requirements.txt
 python3 main.py
 ```
 
-### Standard Installation (Linux/macOS/Windows)
+### Keeping Server Running
+
+Use `termux-wake-lock` to prevent Android from killing background processes:
 
 ```bash
-# Clone the repository
-git clone --branch unified-merge-main-v1.1.0 \
-    https://github.com/sahaj33-op/MSM-minecraft-server-manager-termux.git
+# Acquire wake lock before starting long-running servers
+termux-wake-lock
 
-cd MSM-minecraft-server-manager-termux
-
-# Install Python dependencies
-pip install -r requirements.txt
-
-# Launch MSM
+# Start MSM
 python3 main.py
+
+# Release wake lock when done (or it auto-releases on exit)
+termux-wake-unlock
 ```
 
 ---
@@ -287,19 +297,19 @@ MSM-minecraft-server-manager-termux/
 ### Directory Structure
 
 ```
-~/.config/msm/
-├── msm.log           # Application logs
-├── msm.db            # SQLite database
-├── config.json       # Global configuration
-└── schedule.json     # Scheduled tasks
+$HOME/.config/msm/          # Termux: /data/data/com.termux/files/home/.config/msm/
+├── msm.log                 # Application logs
+├── msm.db                  # SQLite database
+├── config.json             # Global configuration
+└── schedule.json           # Scheduled tasks
 
-~/minecraft-<server-name>/
-├── server.jar        # Server executable
-├── server.properties # Minecraft server configuration
-├── world/            # World data
-├── plugins/          # Plugins directory (Java servers)
-├── logs/             # Server logs
-└── backups/          # World backups
+$HOME/minecraft-<server-name>/
+├── server.jar              # Server executable
+├── server.properties       # Minecraft server configuration
+├── world/                  # World data
+├── plugins/                # Plugins directory (Java servers)
+├── logs/                   # Server logs
+└── backups/                # World backups
 ```
 
 ### Server Configuration Options
@@ -319,12 +329,14 @@ MSM-minecraft-server-manager-termux/
 
 ## Tunneling Services
 
+Tunneling allows external players to connect to your Termux-hosted server.
+
 ### ngrok
 
 Requires ngrok installation and authentication:
 
 ```bash
-# Install ngrok (visit ngrok.com for Termux binaries)
+# Download ngrok for Android/ARM from ngrok.com
 # Configure auth token
 ngrok authtoken <your-token>
 ```
@@ -332,7 +344,6 @@ ngrok authtoken <your-token>
 ### Cloudflare Tunnel
 
 ```bash
-# Termux installation
 pkg install cloudflared
 ```
 
@@ -341,13 +352,12 @@ pkg install cloudflared
 Uses SSH tunneling without additional installation:
 
 ```bash
-# Ensure OpenSSH is installed
 pkg install openssh
 ```
 
 ### playit.gg
 
-Requires proot Debian environment:
+Requires proot-distro with Debian:
 
 ```bash
 # Install proot-distro
@@ -375,10 +385,12 @@ MSM implements multiple security measures:
 
 ### Protected Paths
 
+The following paths are blocked to prevent accidental damage:
+
 ```
 /system, /proc, /sys, /dev
-/etc/passwd, /etc/shadow
 /data/system, /data/misc
+/data/data (except Termux home)
 ```
 
 ---
