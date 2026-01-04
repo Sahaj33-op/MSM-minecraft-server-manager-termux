@@ -31,3 +31,5 @@ MANIFEST
 # IDE settings
 .idea/
 .vscode/
+
+docs/
