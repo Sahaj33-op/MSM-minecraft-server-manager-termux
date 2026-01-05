@@ -7,10 +7,9 @@ import zipfile
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
-# Assume logger is passed or imported if needed
-# from core.logger import EnhancedLogger 
+from core.exceptions import BackupError 
 
 class WorldManager:
     """Manages world backups and restoration with verification and rotation."""
@@ -48,32 +47,39 @@ class WorldManager:
         backup_dir.mkdir(exist_ok=True)
         return backup_dir
 
-    def create_backup(self, server_name: str, server_path: Path) -> bool:
+    def create_backup(self, server_name: str, server_path: Path, raise_on_error: bool = False) -> bool:
         """Create a world backup with ZIP compression and verification.
-        
+
         Args:
             server_name: Name of the server
             server_path: Path to the server directory
-            
+            raise_on_error: If True, raises BackupError instead of returning False
+
         Returns:
             True if backup was created successfully, False otherwise
+
+        Raises:
+            BackupError: If raise_on_error is True and backup fails
         """
         backup_dir = self._get_backup_dir(server_path)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         backup_name = f"world_backup_{timestamp}.zip"
         backup_path = backup_dir / backup_name
-        
+
         try:
             # Find world directories (case-insensitive check)
-            world_dirs = [d for d in server_path.iterdir() 
+            world_dirs = [d for d in server_path.iterdir()
                          if d.is_dir() and 'world' in d.name.lower()]
-            
+
             if not world_dirs:
-                self._log('ERROR', 'No world directories found to backup')
+                error_msg = f'No world directories found in {server_path}'
+                self._log('ERROR', error_msg)
+                if raise_on_error:
+                    raise BackupError(error_msg)
                 return False
-            
+
             self._log('INFO', f'Creating backup: {backup_name}')
-            
+
             # Create the zip file
             with zipfile.ZipFile(backup_path, 'w', zipfile.ZIP_DEFLATED) as zf:
                 for world_dir in world_dirs:
@@ -82,9 +88,9 @@ class WorldManager:
                         for file in files:
                             file_path = Path(root) / file
                             # arcname ensures paths inside zip are relative to server dir
-                            arcname = file_path.relative_to(server_path) 
+                            arcname = file_path.relative_to(server_path)
                             zf.write(file_path, arcname)
-            
+
             backup_size_kb = backup_path.stat().st_size / 1024
             self._log('INFO', f'Backup created: {backup_name} ({backup_size_kb:.1f} KB)')
 
@@ -94,30 +100,58 @@ class WorldManager:
                 with zipfile.ZipFile(backup_path, 'r') as zf:
                     bad_file = zf.testzip()
                     if bad_file:
-                        raise Exception(f"Corrupt file detected: {bad_file}")
+                        raise BackupError(f"Corrupt file detected in backup: {bad_file}")
                 self._log('SUCCESS', f'Backup {backup_name} verified successfully.')
+            except BackupError:
+                raise
             except Exception as e:
-                self._log('ERROR', f'Backup verification failed: {e}')
+                error_msg = f'Backup verification failed: {e}'
+                self._log('ERROR', error_msg)
                 # Delete corrupted backup
                 if backup_path.exists():
                     backup_path.unlink()
                 self._log('ERROR', f'Deleted corrupted backup: {backup_name}')
-                return False # Indicate failure
+                if raise_on_error:
+                    raise BackupError(error_msg) from e
+                return False
 
-            # **Apply Backup Rotation** (Example: keep last 7 backups)
+            # **Apply Backup Rotation** (keep last 7 backups)
             self.rotate_backups(server_path, keep_count=7)
 
-            return True # Indicate success
-            
-        except Exception as e:
-            self._log('ERROR', f'Failed to create backup: {e}')
+            return True
+
+        except BackupError:
+            raise
+        except PermissionError as e:
+            error_msg = f'Permission denied creating backup: {e}'
+            self._log('ERROR', error_msg)
+            if raise_on_error:
+                raise BackupError(error_msg) from e
+            return False
+        except OSError as e:
+            error_msg = f'OS error creating backup (disk full?): {e}'
+            self._log('ERROR', error_msg)
             # Attempt to clean up potentially partial backup file
             if backup_path.exists():
                 try:
                     backup_path.unlink()
-                except OSError: 
-                    pass # Ignore cleanup error
-            return False # Indicate failure
+                except OSError:
+                    pass
+            if raise_on_error:
+                raise BackupError(error_msg) from e
+            return False
+        except Exception as e:
+            error_msg = f'Failed to create backup: {e}'
+            self._log('ERROR', error_msg)
+            # Attempt to clean up potentially partial backup file
+            if backup_path.exists():
+                try:
+                    backup_path.unlink()
+                except OSError:
+                    pass
+            if raise_on_error:
+                raise BackupError(error_msg) from e
+            return False
     
     def list_backups(self, server_path: Path) -> List[Path]:
         """List all available backup files, sorted newest first.
@@ -137,58 +171,93 @@ class WorldManager:
         backups.sort(key=lambda f: f.stat().st_mtime, reverse=True)
         return backups # Return list of Path objects
     
-    def restore_backup(self, server_name: str, server_path: Path, backup_path: Path) -> bool:
+    def restore_backup(self, server_name: str, server_path: Path, backup_path: Path,
+                       raise_on_error: bool = False) -> bool:
         """Restore world from a specific backup Path object.
-        
+
         Args:
             server_name: Name of the server
             server_path: Path to the server directory
             backup_path: Path to the backup file
-            
+            raise_on_error: If True, raises BackupError instead of returning False
+
         Returns:
             True if backup was restored successfully, False otherwise
+
+        Raises:
+            BackupError: If raise_on_error is True and restore fails
         """
         try:
             if not backup_path.exists():
-                self._log('ERROR', f'Backup file not found: {backup_path.name}')
+                error_msg = f'Backup file not found: {backup_path}'
+                self._log('ERROR', error_msg)
+                if raise_on_error:
+                    raise BackupError(error_msg)
                 return False
-            
+
             self._log('INFO', f'Restoring from backup: {backup_path.name}')
-            
+
             # **Important:** Stop the server before restoring! (Handled externally)
 
             # Find existing world directories to remove
-            existing_world_dirs = [d for d in server_path.iterdir() 
+            existing_world_dirs = [d for d in server_path.iterdir()
                                    if d.is_dir() and 'world' in d.name.lower()]
-            
+
             # Extract backup contents to determine which directories to remove
             world_dirs_in_backup = set()
             try:
                 with zipfile.ZipFile(backup_path, 'r') as zf:
+                    # Verify backup integrity before restore
+                    bad_file = zf.testzip()
+                    if bad_file:
+                        raise BackupError(f"Backup is corrupted, cannot restore: {bad_file}")
+
                     for item in zf.namelist():
                         # Get the top-level directory name
                         first_part = item.split(os.path.sep, 1)[0]
-                        if 'world' in first_part.lower(): # Check if it looks like a world folder
-                             world_dirs_in_backup.add(first_part)
+                        if 'world' in first_part.lower():
+                            world_dirs_in_backup.add(first_part)
+            except BackupError:
+                raise
+            except zipfile.BadZipFile as e:
+                error_msg = f"Backup file is corrupted: {backup_path.name}"
+                self._log('ERROR', error_msg)
+                if raise_on_error:
+                    raise BackupError(error_msg) from e
+                return False
             except Exception as e:
-                 self._log('ERROR', f"Could not read backup file {backup_path.name}: {e}")
-                 return False
+                error_msg = f"Could not read backup file {backup_path.name}: {e}"
+                self._log('ERROR', error_msg)
+                if raise_on_error:
+                    raise BackupError(error_msg) from e
+                return False
 
             # Remove only the world directories that exist AND are in the backup
             for dir_path in existing_world_dirs:
-                 if dir_path.name in world_dirs_in_backup:
-                      self._log('INFO', f'Removing existing world directory: {dir_path.name}')
-                      shutil.rmtree(dir_path)
+                if dir_path.name in world_dirs_in_backup:
+                    self._log('INFO', f'Removing existing world directory: {dir_path.name}')
+                    shutil.rmtree(dir_path)
 
             # Extract backup
             with zipfile.ZipFile(backup_path, 'r') as zf:
                 zf.extractall(server_path)
-            
+
             self._log('SUCCESS', f'Restore completed from {backup_path.name}')
             return True
-            
+
+        except BackupError:
+            raise
+        except PermissionError as e:
+            error_msg = f'Permission denied during restore: {e}'
+            self._log('ERROR', error_msg)
+            if raise_on_error:
+                raise BackupError(error_msg) from e
+            return False
         except Exception as e:
-            self._log('ERROR', f'Failed to restore backup: {e}')
+            error_msg = f'Failed to restore backup: {e}'
+            self._log('ERROR', error_msg)
+            if raise_on_error:
+                raise BackupError(error_msg) from e
             return False
             
     def delete_backup(self, server_path: Path, backup_path: Path) -> bool:

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional, Dict, List, Tuple, Any, Union
 
 # Add imports for custom exceptions
-from core.exceptions import DownloadError, ConfigError, APIError
+from core.exceptions import DownloadError, ConfigError, APIError, ServerError
 from core.config import ConfigManager
 from core.database import DatabaseManager
 from core.monitoring import PerformanceMonitor
@@ -23,8 +23,10 @@ from managers.api_client import (
     PaperMCAPI, PurpurAPI, FoliaAPI, VanillaAPI, FabricAPI, QuiltAPI, PocketMineAPI
 )
 from utils.helpers import (
-    sanitize_input, get_java_path, is_screen_session_running, 
-    run_command, get_server_directory, get_screen_session_name
+    sanitize_input, get_java_path, is_screen_session_running,
+    run_command, get_server_directory, get_screen_session_name,
+    validate_port, is_port_in_use, validate_ram_allocation, validate_max_players,
+    validate_server_name, validate_minecraft_version
 )
 from ui.interface import UI
 
@@ -95,30 +97,36 @@ class ServerManager:
     
     def create_server(self, name: str) -> bool:
         """Create new server configuration.
-        
+
         Args:
             name: Name of the server to create
-            
+
         Returns:
             True if server was created successfully, False otherwise
         """
+        # Validate server name first
+        is_valid, error_msg = validate_server_name(name)
+        if not is_valid:
+            self.logger.log('ERROR', f'Invalid server name: {error_msg}')
+            return False
+
         safe_name = sanitize_input(name)
         server_dir = get_server_directory(safe_name)
-        
+
         if server_dir.exists():
             self.logger.log('ERROR', f'Server {safe_name} already exists')
             return False
-        
+
         try:
             server_dir.mkdir(parents=True, exist_ok=True)
-            
+
             server_config = {
                 'server_flavor': None,
                 'server_version': None,
                 'ram_mb': 2048,
                 'auto_restart': False,
                 'server_settings': {
-                    'motd': f'{name} Server',
+                    'motd': f'{safe_name} Server',
                     'port': 25565,
                     'max-players': 20,
                     'gamemode': 'survival',
@@ -138,7 +146,7 @@ class ServerManager:
                     'level-name': 'world'
                 }
             }
-            
+
             ConfigManager.save_server_config(safe_name, server_config)
             self.set_current_server(safe_name)
             
@@ -148,13 +156,74 @@ class ServerManager:
         except Exception as e:
             self.logger.log('ERROR', f'Failed to create server: {e}')
             return False
-    
+
+    def _check_eula_acceptance(self, server_name: str) -> bool:
+        """Check if user has accepted EULA and prompt if not.
+
+        Args:
+            server_name: Name of the server
+
+        Returns:
+            True if EULA is accepted, False otherwise
+
+        Raises:
+            ConfigError: If user does not accept EULA
+        """
+        # Check if EULA already accepted for this server
+        config = ConfigManager.load()
+        server_config = config.get('servers', {}).get(server_name, {})
+
+        if server_config.get('eula_accepted', False):
+            return True
+
+        # Display EULA agreement
+        print("\n" + "=" * 70)
+        print("MINECRAFT END USER LICENSE AGREEMENT")
+        print("=" * 70)
+        print("By changing the setting below to TRUE you are indicating your")
+        print("agreement to the Minecraft End User License Agreement.")
+        print("\nView the full EULA at: https://aka.ms/MinecraftEULA")
+        print("=" * 70)
+        print("\nIMPORTANT: You must accept this agreement to run a Minecraft server.")
+        print("=" * 70 + "\n")
+
+        # Prompt user
+        while True:
+            response = input("Do you agree to the Minecraft EULA? (yes/no): ").strip().lower()
+
+            if response in ['yes', 'y']:
+                # Save acceptance to config
+                if 'servers' not in config:
+                    config['servers'] = {}
+                if server_name not in config['servers']:
+                    config['servers'][server_name] = {}
+
+                config['servers'][server_name]['eula_accepted'] = True
+                ConfigManager.save(config)
+
+                self.logger.log('INFO', f'EULA accepted for server: {server_name}')
+                return True
+
+            elif response in ['no', 'n']:
+                self.logger.log('WARNING', 'EULA not accepted - server cannot start')
+                raise ConfigError(
+                    "Minecraft EULA must be accepted to run a server. "
+                    "Visit https://aka.ms/MinecraftEULA for more information."
+                )
+            else:
+                print("Please answer 'yes' or 'no'")
+
     def start_server(self) -> bool:
         """Start the current server with monitoring.
-        
+
         Returns:
             True if server was started successfully, False otherwise
         """
+        # Check if screen is installed
+        if not shutil.which('screen'):
+            self.logger.log('ERROR', 'Screen is not installed. Install with: pkg install screen')
+            return False
+
         current_server = self.get_current_server()
         if not current_server:
             self.logger.log('ERROR', 'No server selected')
@@ -174,7 +243,15 @@ class ServerManager:
         if is_screen_session_running(screen_name):
             self.logger.log('WARNING', 'Server is already running')
             return False
-        
+
+        # Check EULA acceptance for Java-based servers (not PocketMine)
+        if flavor != 'pocketmine':
+            try:
+                self._check_eula_acceptance(current_server)
+            except ConfigError as e:
+                self.logger.log('ERROR', str(e))
+                return False
+
         # --- Determine startup command based on flavor ---
         startup_command = []
         ram_mb = server_config.get('ram_mb', 1024) # Default RAM
@@ -217,15 +294,13 @@ class ServerManager:
                 self.logger.log('ERROR', f'Required Java version for {version} not found.')
                 return False
 
-            # Accept EULA if needed
+            # Write eula.txt file (user has already accepted via _check_eula_acceptance)
             eula_file = server_dir / 'eula.txt'
             try:
-                if not eula_file.exists() or 'eula=false' in eula_file.read_text(errors='ignore'):
-                    eula_file.write_text('eula=true\n')
-                    self.logger.log('INFO', 'EULA accepted')
+                eula_file.write_text('eula=true\n')
             except Exception as e:
-                 self.logger.log('WARNING', f'Could not handle EULA file: {e}')
-                 # Proceed anyway, server might handle it
+                self.logger.log('WARNING', f'Could not write EULA file: {e}')
+                # Proceed anyway, server might handle it
 
             # Create or update server.properties
             self._update_server_properties(current_server, server_config.get('server_settings', {}))
@@ -248,9 +323,22 @@ class ServerManager:
         
         try:
             # Pass cwd=str(server_dir) to run command inside the server directory
-            returncode, stdout, stderr = run_command(screen_cmd, cwd=str(server_dir)) 
+            returncode, stdout, stderr = run_command(screen_cmd, cwd=str(server_dir))
             if returncode == 0:
-                self.logger.log('SUCCESS', f'Server {current_server} started')
+                # Give server time to initialize
+                time.sleep(5)
+
+                # Verify server actually started
+                if not self._verify_server_running(current_server, flavor):
+                    self.logger.log('ERROR', f'Server {current_server} failed to start - check server logs')
+                    # Try to stop the failed session
+                    try:
+                        run_command(['screen', '-X', '-S', screen_name, 'quit'])
+                    except:
+                        pass
+                    return False
+
+                self.logger.log('SUCCESS', f'Server {current_server} started and verified')
                 
                 # Log session start
                 try:
@@ -295,7 +383,57 @@ class ServerManager:
         except Exception as e:
             self.logger.log('ERROR', f'Unexpected error starting server: {e}')
             return False
-    
+
+    def _verify_server_running(self, server_name: str, flavor: str) -> bool:
+        """Verify server process is actually running after startup.
+
+        Args:
+            server_name: Name of the server
+            flavor: Server flavor (to determine process type)
+
+        Returns:
+            True if server is running, False otherwise
+        """
+        screen_name = get_screen_session_name(server_name)
+
+        # Check screen session exists
+        result = run_command(['screen', '-list'], capture_output=True)
+        if screen_name not in result[1]:
+            self.logger.log('ERROR', f'Screen session not found: {screen_name}')
+            return False
+
+        # Determine process name based on flavor
+        if flavor == 'pocketmine':
+            process_check = 'php'
+        else:
+            process_check = 'java'
+
+        # Check if Java/PHP process exists for this server
+        try:
+            for proc in psutil.process_iter(['name', 'cmdline']):
+                try:
+                    proc_info = proc.info
+                    if not proc_info['name'] or not proc_info['cmdline']:
+                        continue
+
+                    proc_name = proc_info['name'].lower()
+                    cmdline = ' '.join(proc_info['cmdline'])
+
+                    # Check if it's the right process type and references our server
+                    if process_check in proc_name and (server_name in cmdline or screen_name in cmdline):
+                        self.logger.log('INFO', f'Verified {process_check} process running for {server_name}')
+                        return True
+
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+
+            self.logger.log('WARNING', f'No {process_check} process found for {server_name}')
+            return False
+
+        except Exception as e:
+            self.logger.log('WARNING', f'Error verifying server process: {e}')
+            return False
+
     def _update_server_properties(self, server_name: str, settings: dict):
         """Update server.properties file with given settings.
         
@@ -824,17 +962,52 @@ class ServerManager:
                     if choice == '1':
                         new_ram = input("Enter new RAM allocation (MB): ").strip()
                         if new_ram.isdigit():
-                            server_config['ram_mb'] = int(new_ram)
-                            print(f"{UI.colors.GREEN}RAM allocation updated to {new_ram} MB{UI.colors.RESET}")
+                            ram_mb = int(new_ram)
+                            try:
+                                # Validate RAM allocation against system memory
+                                is_valid, message = validate_ram_allocation(ram_mb)
+
+                                if not is_valid:
+                                    print(f"{UI.colors.RED}{message}{UI.colors.RESET}")
+                                    continue
+
+                                if message:  # Warning message
+                                    print(f"{UI.colors.YELLOW}{message}{UI.colors.RESET}")
+                                    confirm = input("Continue anyway? (yes/no): ").strip().lower()
+                                    if confirm not in ['yes', 'y']:
+                                        print(f"{UI.colors.CYAN}RAM change cancelled.{UI.colors.RESET}")
+                                        continue
+
+                                server_config['ram_mb'] = ram_mb
+                                print(f"{UI.colors.GREEN}RAM allocation updated to {ram_mb} MB{UI.colors.RESET}")
+
+                            except ValueError as e:
+                                print(f"{UI.colors.RED}Invalid RAM value: {e}{UI.colors.RESET}")
                         else:
                             print(f"{UI.colors.RED}Invalid input. Please enter a number.{UI.colors.RESET}")
                     elif choice == '2':
                         new_port = input("Enter new port: ").strip()
-                        if new_port.isdigit() and 1 <= int(new_port) <= 65535:
-                            settings['port'] = int(new_port)
-                            print(f"{UI.colors.GREEN}Port updated to {new_port}{UI.colors.RESET}")
+                        if new_port.isdigit():
+                            port = int(new_port)
+                            try:
+                                # Validate port range
+                                validate_port(port)
+
+                                # Check if port is already in use
+                                if is_port_in_use(port):
+                                    print(f"{UI.colors.YELLOW}Warning: Port {port} appears to be in use.{UI.colors.RESET}")
+                                    confirm = input(f"Continue anyway? (yes/no): ").strip().lower()
+                                    if confirm not in ['yes', 'y']:
+                                        print(f"{UI.colors.CYAN}Port change cancelled.{UI.colors.RESET}")
+                                        continue
+
+                                settings['port'] = port
+                                print(f"{UI.colors.GREEN}Port updated to {port}{UI.colors.RESET}")
+
+                            except ValueError as e:
+                                print(f"{UI.colors.RED}Invalid port: {e}{UI.colors.RESET}")
                         else:
-                            print(f"{UI.colors.RED}Invalid port. Please enter a number between 1-65535.{UI.colors.RESET}")
+                            print(f"{UI.colors.RED}Invalid input. Please enter a number.{UI.colors.RESET}")
                     elif choice == '3':
                         server_config['auto_restart'] = not server_config.get('auto_restart', False)
                         status = "enabled" if server_config['auto_restart'] else "disabled"
@@ -848,11 +1021,16 @@ class ServerManager:
                             print(f"{UI.colors.RED}MOTD cannot be empty{UI.colors.RESET}")
                     elif choice == '5':
                         new_max_players = input("Enter max players: ").strip()
-                        if new_max_players.isdigit() and 1 <= int(new_max_players) <= 1000:
-                            settings['max-players'] = int(new_max_players)
-                            print(f"{UI.colors.GREEN}Max players updated to {new_max_players}{UI.colors.RESET}")
+                        if new_max_players.isdigit():
+                            try:
+                                max_players = int(new_max_players)
+                                validate_max_players(max_players)
+                                settings['max-players'] = max_players
+                                print(f"{UI.colors.GREEN}Max players updated to {max_players}{UI.colors.RESET}")
+                            except ValueError as e:
+                                print(f"{UI.colors.RED}Invalid max players: {e}{UI.colors.RESET}")
                         else:
-                            print(f"{UI.colors.RED}Invalid input. Please enter a number between 1-1000.{UI.colors.RESET}")
+                            print(f"{UI.colors.RED}Invalid input. Please enter a number.{UI.colors.RESET}")
                     elif choice == '0':
                         break
                     else:

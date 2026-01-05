@@ -13,7 +13,11 @@ import psutil
 import threading
 import re
 from pathlib import Path
+from typing import Dict, Optional
+
 from environment import EnvironmentManager
+from utils.helpers import validate_port, get_config_dir
+from core.exceptions import TunnelError
 
 class TunnelManager:
     """Manages various tunneling services for exposing local servers to the internet."""
@@ -167,8 +171,15 @@ class TunnelManager:
                 del self.tunnel_processes[tunnel_name]
                 if tunnel_name in self.tunnel_info:
                     del self.tunnel_info[tunnel_name]
+
+                # Join URL extraction thread if it exists
                 if tunnel_name in self.url_extraction_threads:
+                    thread = self.url_extraction_threads[tunnel_name]
+                    if thread and thread.is_alive():
+                        self._log('INFO', f'Waiting for {tunnel_name} URL extraction thread to finish...')
+                        thread.join(timeout=5)
                     del self.url_extraction_threads[tunnel_name]
+
                 self._save_tunnel_state()
                 self._log('SUCCESS', f'{tunnel_name} tunnel stopped')
                 return True
@@ -202,34 +213,42 @@ class TunnelManager:
             }
         return tunnels
 
-    def start_ngrok(self, port):
+    def start_ngrok(self, port: int, raise_on_error: bool = False) -> bool:
         """Start ngrok tunnel for the specified port.
-        
+
         Args:
             port: Port number to tunnel
-            
+            raise_on_error: If True, raises TunnelError instead of returning False
+
         Returns:
             True if tunnel was started successfully, False otherwise
+
+        Raises:
+            TunnelError: If raise_on_error is True and tunnel fails to start
         """
         if not shutil.which('ngrok'):
-            self._log('ERROR', 'ngrok not found. Install from ngrok.com and add to PATH.')
+            error_msg = 'ngrok not found. Install from ngrok.com and add to PATH.'
+            self._log('ERROR', error_msg)
+            if raise_on_error:
+                raise TunnelError(error_msg)
             return False
-        
-        # Security: Validate port number
+
+        # Validate port number
         try:
             port_int = int(port)
-            if not (1 <= port_int <= 65535):
-                self._log('ERROR', f'Invalid port number: {port}')
-                return False
-        except (ValueError, TypeError):
-            self._log('ERROR', f'Invalid port number: {port}')
+            validate_port(port_int)
+        except (ValueError, TypeError) as e:
+            error_msg = f'Invalid port: {e}'
+            self._log('ERROR', error_msg)
+            if raise_on_error:
+                raise TunnelError(error_msg) from e
             return False
-        
+
         cmd = ["ngrok", "tcp", str(port_int)]
         try:
             proc = subprocess.Popen(
-                cmd, 
-                stdout=subprocess.PIPE, 
+                cmd,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 shell=False,  # Security: Never use shell=True
                 text=True
@@ -237,69 +256,218 @@ class TunnelManager:
             self.tunnel_processes['ngrok'] = proc
             self._update_tunnel_info('ngrok', {'port': port_int, 'started_at': time.time(), 'url': 'Extracting...'})
             self._save_tunnel_state()
-            
+
             # Start URL extraction thread
             url_thread = threading.Thread(
-                target=self._extract_ngrok_url, 
-                args=(proc, 'ngrok'), 
+                target=self._extract_ngrok_url,
+                args=(proc, 'ngrok'),
                 daemon=True,
                 name=f"ngrok-extract-{port_int}"
             )
             self.url_extraction_threads['ngrok'] = url_thread
             url_thread.start()
-            
+
             self._log('SUCCESS', f'ngrok started for tcp {port_int}.')
             return True
         except FileNotFoundError:
-            self._log('ERROR', 'ngrok command not found')
+            error_msg = 'ngrok command not found'
+            self._log('ERROR', error_msg)
+            if raise_on_error:
+                raise TunnelError(error_msg)
             return False
         except PermissionError:
-            self._log('ERROR', 'Permission denied starting ngrok')
+            error_msg = 'Permission denied starting ngrok'
+            self._log('ERROR', error_msg)
+            if raise_on_error:
+                raise TunnelError(error_msg)
             return False
         except Exception as e:
-            self._log('ERROR', f'Failed to start ngrok: {e}')
+            error_msg = f'Failed to start ngrok: {e}'
+            self._log('ERROR', error_msg)
+            if raise_on_error:
+                raise TunnelError(error_msg) from e
             return False
 
-    def start_cloudflared(self, port):
-        """Start cloudflared tunnel for the specified port.
-        
+    def start_pinggy(self, port: int, raise_on_error: bool = False) -> bool:
+        """Start pinggy tunnel for the specified port.
+
         Args:
             port: Port number to tunnel
-            
+            raise_on_error: If True, raises TunnelError instead of returning False
+
         Returns:
             True if tunnel was started successfully, False otherwise
+
+        Raises:
+            TunnelError: If raise_on_error is True and tunnel fails to start
+        """
+        if not shutil.which('ssh'):
+            error_msg = 'OpenSSH client not found. Install: pkg install openssh'
+            self._log('ERROR', error_msg)
+            if raise_on_error:
+                raise TunnelError(error_msg)
+            return False
+
+        # Validate port number
+        try:
+            port_int = int(port)
+            validate_port(port_int)
+        except (ValueError, TypeError) as e:
+            error_msg = f'Invalid port: {e}'
+            self._log('ERROR', error_msg)
+            if raise_on_error:
+                raise TunnelError(error_msg) from e
+            return False
+
+        # user must provide token, but we allow a free variant template
+        cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-R", f"0:localhost:{port_int}", "a.pinggy.io"]
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.tunnel_processes['pinggy'] = proc
+            self._update_tunnel_info('pinggy', {'port': port_int, 'started_at': time.time(), 'url': 'Check SSH output for URL'})
+            self._save_tunnel_state()
+            self._log('SUCCESS', f'pinggy started for tcp {port_int}.')
+            return True
+        except FileNotFoundError:
+            error_msg = 'ssh command not found'
+            self._log('ERROR', error_msg)
+            if raise_on_error:
+                raise TunnelError(error_msg)
+            return False
+        except Exception as e:
+            error_msg = f'Failed to start pinggy: {e}'
+            self._log('ERROR', error_msg)
+            if raise_on_error:
+                raise TunnelError(error_msg) from e
+            return False
+
+    def start_cloudflared(self, port: int, raise_on_error: bool = False) -> bool:
+        """Start cloudflared tunnel for the specified port.
+
+        Args:
+            port: Port number to tunnel
+            raise_on_error: If True, raises TunnelError instead of returning False
+
+        Returns:
+            True if tunnel was started successfully, False otherwise
+
+        Raises:
+            TunnelError: If raise_on_error is True and tunnel fails to start
         """
         if not shutil.which('cloudflared'):
-            self._log('ERROR', 'cloudflared not found. Install: pkg install cloudflared')
+            error_msg = 'cloudflared not found. Install: pkg install cloudflared'
+            self._log('ERROR', error_msg)
+            if raise_on_error:
+                raise TunnelError(error_msg)
             return False
-        cmd = ["cloudflared", "tunnel", "--url", f"tcp://localhost:{port}"]
+
+        # Validate port number
+        try:
+            port_int = int(port)
+            validate_port(port_int)
+        except (ValueError, TypeError) as e:
+            error_msg = f'Invalid port: {e}'
+            self._log('ERROR', error_msg)
+            if raise_on_error:
+                raise TunnelError(error_msg) from e
+            return False
+
+        cmd = ["cloudflared", "tunnel", "--url", f"tcp://localhost:{port_int}"]
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.tunnel_processes['cloudflared'] = proc
-            self._update_tunnel_info('cloudflared', {'port': port, 'started_at': time.time(), 'url': 'Extracting...'})
+            self._update_tunnel_info('cloudflared', {'port': port_int, 'started_at': time.time(), 'url': 'Extracting...'})
             self._save_tunnel_state()
-            
+
             # Start URL extraction thread
-            url_thread = threading.Thread(target=self._extract_cloudflared_url, args=(proc, 'cloudflared'), daemon=True)
+            url_thread = threading.Thread(
+                target=self._extract_cloudflared_url,
+                args=(proc, 'cloudflared'),
+                daemon=True,
+                name=f"cloudflared-extract-{port_int}"
+            )
             self.url_extraction_threads['cloudflared'] = url_thread
             url_thread.start()
-            
-            self._log('SUCCESS', f'cloudflared started for tcp {port}.')
+
+            self._log('SUCCESS', f'cloudflared started for tcp {port_int}.')
             return True
+        except FileNotFoundError:
+            error_msg = 'cloudflared command not found'
+            self._log('ERROR', error_msg)
+            if raise_on_error:
+                raise TunnelError(error_msg)
+            return False
         except Exception as e:
-            self._log('ERROR', f'Failed to start cloudflared: {e}')
+            error_msg = f'Failed to start cloudflared: {e}'
+            self._log('ERROR', error_msg)
+            if raise_on_error:
+                raise TunnelError(error_msg) from e
             return False
 
-    def start_pinggy(self, port):
-        """Start pinggy tunnel for the specified port.
-        
+    def start_playit(self, port: int, raise_on_error: bool = False) -> bool:
+        """Start playit.gg tunnel for the specified port.
+
         Args:
             port: Port number to tunnel
-            
+            raise_on_error: If True, raises TunnelError instead of returning False
+
         Returns:
             True if tunnel was started successfully, False otherwise
+
+        Raises:
+            TunnelError: If raise_on_error is True and tunnel fails to start
         """
-        if not shutil.which('ssh'):
-            self._log('ERROR', 'OpenSSH client not found. Install: pkg install openssh')
+        # Playit requires Debian/proot (user choice)
+        if not EnvironmentManager.ensure_debian_if_needed('playit'):
+            error_msg = 'Debian environment required for playit.gg. Aborting.'
+            self._log('ERROR', error_msg)
+            if raise_on_error:
+                raise TunnelError(error_msg)
             return False
-        # user must provide token, but we allow a free variant template
+
+        # Validate port number
+        try:
+            port_int = int(port)
+            validate_port(port_int)
+        except (ValueError, TypeError) as e:
+            error_msg = f'Invalid port: {e}'
+            self._log('ERROR', error_msg)
+            if raise_on_error:
+                raise TunnelError(error_msg) from e
+            return False
+
+        # We assume playit binary is installed in Debian env; just document path
+        self._update_tunnel_info('playit', {
+            'port': port_int,
+            'started_at': time.time(),
+            'note': 'Run playit agent inside Debian (proot-distro login)'
+        })
+        self._save_tunnel_state()
+        self._log('INFO', 'Please run playit agent inside Debian (proot-distro login).')
+        return True
+
+    def setup_playit(self) -> bool:
+        """Complete playit.gg integration with token management.
+
+        Returns:
+            True if setup instructions were displayed
+        """
+        self._log('INFO', 'Setting up playit.gg...')
+        # This would include token management and full integration
+        # For now, we'll just provide instructions
+        self._log('INFO', '1. Install playit agent in Debian environment')
+        self._log('INFO', '2. Run: playit agent')
+        self._log('INFO', '3. Follow the setup wizard to create an account or login')
+        self._log('INFO', '4. Create a new tunnel for your server')
+        return True
+
+    def check_tunnel_status(self) -> Dict[str, str]:
+        """Check tunnel status with process tracking.
+
+        Returns:
+            Dictionary mapping tunnel names to their status
+        """
+        status_report = {}
+        for name in self.tunnel_processes:
+            status_report[name] = self.get_tunnel_status(name)
+        return status_report

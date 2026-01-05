@@ -5,11 +5,17 @@ Environment detection with optional proot (Debian) support.
 - Optional: ensure Debian via proot-distro when playit.gg chosen
 """
 import os, shutil, subprocess
+from utils.termux_utils import is_termux_environment
 
 class EnvironmentManager:
     @staticmethod
     def is_termux():
-        return 'com.termux' in (os.environ.get('PREFIX','')) or os.path.exists('/data/data/com.termux')
+        """Check if running in Termux environment.
+
+        This method delegates to termux_utils for consistency.
+        Use termux_utils.is_termux_environment() directly when possible.
+        """
+        return is_termux_environment()
 
     @staticmethod
     def has_proot_distro():

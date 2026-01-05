@@ -172,3 +172,108 @@ class PerformanceMonitor:
                 'cpu_count': 2,
                 'cpu_usage': 0.0
             }
+
+    def get_health_check(self, server_name: Optional[str] = None) -> Dict[str, Any]:
+        """Perform a health check on the system and optionally a specific server.
+
+        Args:
+            server_name: Optional server name to check specific server health
+
+        Returns:
+            Dictionary containing health status information
+        """
+        health = {
+            'status': 'healthy',
+            'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'system': {},
+            'warnings': [],
+            'errors': []
+        }
+
+        # System health checks
+        try:
+            mem = psutil.virtual_memory()
+            disk = psutil.disk_usage('/')
+
+            health['system'] = {
+                'cpu_percent': psutil.cpu_percent(interval=0.5),
+                'memory_percent': mem.percent,
+                'memory_available_mb': mem.available // (1024 * 1024),
+                'disk_percent': disk.percent,
+                'disk_free_gb': disk.free // (1024 * 1024 * 1024)
+            }
+
+            # Check for high resource usage
+            if mem.percent > 90:
+                health['warnings'].append(f"High memory usage: {mem.percent:.1f}%")
+                health['status'] = 'degraded'
+
+            if disk.percent > 90:
+                health['warnings'].append(f"Low disk space: {100 - disk.percent:.1f}% free")
+                health['status'] = 'degraded'
+
+        except Exception as e:
+            health['errors'].append(f"Failed to get system info: {e}")
+            health['status'] = 'unhealthy'
+
+        # Server-specific health check
+        if server_name:
+            health['server'] = self._check_server_health(server_name)
+            if health['server'].get('status') == 'unhealthy':
+                health['status'] = 'unhealthy'
+            elif health['server'].get('status') == 'degraded' and health['status'] != 'unhealthy':
+                health['status'] = 'degraded'
+
+        # Determine overall status based on warnings/errors
+        if health['errors']:
+            health['status'] = 'unhealthy'
+        elif health['warnings'] and health['status'] != 'unhealthy':
+            health['status'] = 'degraded'
+
+        return health
+
+    def _check_server_health(self, server_name: str) -> Dict[str, Any]:
+        """Check health of a specific server.
+
+        Args:
+            server_name: Name of the server to check
+
+        Returns:
+            Dictionary containing server health status
+        """
+        server_health = {
+            'name': server_name,
+            'status': 'unknown',
+            'monitoring_active': False,
+            'process_running': False
+        }
+
+        with self._lock:
+            if server_name in self.monitor_threads:
+                server_health['monitoring_active'] = True
+                thread = self.monitor_threads[server_name]
+                server_health['thread_alive'] = thread.is_alive()
+
+        # Check if server process is running (basic check)
+        from utils.helpers import get_screen_session_name, is_screen_session_running
+
+        screen_name = get_screen_session_name(server_name)
+        if is_screen_session_running(screen_name):
+            server_health['process_running'] = True
+            server_health['status'] = 'healthy'
+        else:
+            server_health['status'] = 'stopped'
+
+        return server_health
+
+    def get_active_monitors(self) -> Dict[str, bool]:
+        """Get status of all active monitoring threads.
+
+        Returns:
+            Dictionary mapping server names to their monitoring thread status
+        """
+        with self._lock:
+            return {
+                name: thread.is_alive()
+                for name, thread in self.monitor_threads.items()
+            }

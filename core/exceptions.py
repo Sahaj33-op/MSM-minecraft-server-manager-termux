@@ -38,3 +38,11 @@ class BackupError(MSMError):
 class PluginError(MSMError):
      """Errors related to plugin management."""
      pass
+
+class DatabaseError(MSMError):
+     """Errors related to database operations."""
+     pass
+
+class ServerError(MSMError):
+     """Errors related to server operations."""
+     pass

@@ -4,10 +4,12 @@ Scheduler - Handles scheduled tasks like backups and restarts.
 """
 import json
 import time
+import signal
+import atexit
 from datetime import datetime, timedelta
 from pathlib import Path
 import threading
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Callable
 
 # Assume logger is passed or imported
 # from core.logger import EnhancedLogger
@@ -16,12 +18,16 @@ from typing import List, Dict, Optional
 # from managers.world_manager import WorldManager
 # from utils.helpers import get_server_directory
 
+
 class Scheduler:
     """Manages scheduled tasks like backups and restarts."""
 
+    # Singleton instance for signal handler access
+    _instance: Optional['Scheduler'] = None
+
     def __init__(self, config_dir: Path, logger=None, server_manager=None, world_manager=None):
         """Initialize the Scheduler.
-        
+
         Args:
             config_dir: Path to the configuration directory
             logger: Logger instance for logging messages
@@ -35,12 +41,17 @@ class Scheduler:
         self.tasks = self._load_schedule()
         self.running = False
         self.thread = None
-        self.check_interval = 60 # Check every 60 seconds
+        self.check_interval = 60  # Check every 60 seconds
         self._lock = threading.Lock()  # Thread safety
+        self._shutdown_event = threading.Event()  # For graceful shutdown
+        self._shutdown_callbacks: List[Callable] = []  # Callbacks to run on shutdown
+
+        # Set singleton for signal handler access
+        Scheduler._instance = self
 
     def _log(self, level: str, message: str):
         """Log a message using the logger or print to console.
-        
+
         Args:
             level: Log level (INFO, ERROR, WARNING, etc.)
             message: Message to log
@@ -49,6 +60,93 @@ class Scheduler:
             self.logger.log(level, message)
         else:
             print(f"[{level}] {message}")
+
+    def register_shutdown_callback(self, callback: Callable) -> None:
+        """Register a callback to be called during shutdown.
+
+        Args:
+            callback: Function to call during shutdown (no arguments)
+        """
+        if callback not in self._shutdown_callbacks:
+            self._shutdown_callbacks.append(callback)
+
+    def unregister_shutdown_callback(self, callback: Callable) -> None:
+        """Unregister a shutdown callback.
+
+        Args:
+            callback: Function to remove from callbacks
+        """
+        if callback in self._shutdown_callbacks:
+            self._shutdown_callbacks.remove(callback)
+
+    def graceful_shutdown(self, signum: Optional[int] = None, frame=None) -> None:
+        """Perform graceful shutdown of the scheduler and registered components.
+
+        This method can be used as a signal handler or called directly.
+
+        Args:
+            signum: Signal number (optional, for signal handler compatibility)
+            frame: Current stack frame (optional, for signal handler compatibility)
+        """
+        if signum:
+            self._log('INFO', f'Received signal {signum}, initiating graceful shutdown...')
+        else:
+            self._log('INFO', 'Initiating graceful shutdown...')
+
+        # Signal shutdown to the scheduler loop
+        self._shutdown_event.set()
+
+        # Stop the scheduler
+        self.stop()
+
+        # Run all registered shutdown callbacks
+        for callback in self._shutdown_callbacks:
+            try:
+                self._log('INFO', f'Running shutdown callback: {callback.__name__}')
+                callback()
+            except Exception as e:
+                self._log('ERROR', f'Error in shutdown callback {callback.__name__}: {e}')
+
+        # Save current schedule state
+        try:
+            self._save_schedule()
+            self._log('INFO', 'Schedule saved during shutdown')
+        except Exception as e:
+            self._log('ERROR', f'Failed to save schedule during shutdown: {e}')
+
+        self._log('INFO', 'Graceful shutdown complete')
+
+    def setup_signal_handlers(self) -> None:
+        """Set up signal handlers for graceful shutdown.
+
+        This should be called from the main thread.
+        """
+        try:
+            # Handle SIGINT (Ctrl+C) and SIGTERM
+            signal.signal(signal.SIGINT, self.graceful_shutdown)
+            signal.signal(signal.SIGTERM, self.graceful_shutdown)
+
+            # Register atexit handler as fallback
+            atexit.register(self._atexit_handler)
+
+            self._log('INFO', 'Signal handlers registered for graceful shutdown')
+        except Exception as e:
+            self._log('WARNING', f'Could not set up signal handlers: {e}')
+
+    def _atexit_handler(self) -> None:
+        """Handler called at program exit."""
+        if self.running:
+            self._log('INFO', 'Atexit handler: stopping scheduler')
+            self.stop()
+
+    @classmethod
+    def get_instance(cls) -> Optional['Scheduler']:
+        """Get the singleton scheduler instance.
+
+        Returns:
+            The scheduler instance or None if not created
+        """
+        return cls._instance
 
     def _load_schedule(self) -> List[Dict]:
         """Load schedule from JSON file.
@@ -300,12 +398,16 @@ class Scheduler:
     def _scheduler_loop(self):
         """Main scheduler loop that runs in a separate thread."""
         self._log('INFO', 'Scheduler loop started')
-        
-        while self.running:
+
+        while self.running and not self._shutdown_event.is_set():
             try:
                 now = datetime.now()
-                
+
                 for task in self.tasks:
+                    # Check for shutdown between task executions
+                    if self._shutdown_event.is_set():
+                        break
+
                     if self._should_run(task, now):
                         try:
                             self._execute_task(task)
@@ -315,12 +417,14 @@ class Scheduler:
                             self._save_schedule()
                         except Exception as e:
                             self._log('ERROR', f'Error executing task {task.get("id")}: {e}')
-                
-                # Sleep for the check interval
-                time.sleep(self.check_interval)
-                
+
+                # Use event wait instead of sleep for responsive shutdown
+                # This will return immediately if shutdown_event is set
+                self._shutdown_event.wait(timeout=self.check_interval)
+
             except Exception as e:
                 self._log('ERROR', f'Error in scheduler loop: {e}')
-                time.sleep(self.check_interval)  # Continue despite errors
-        
+                # Use event wait for error recovery too
+                self._shutdown_event.wait(timeout=self.check_interval)
+
         self._log('INFO', 'Scheduler loop stopped')

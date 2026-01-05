@@ -10,10 +10,17 @@ import argparse
 import psutil  # For getting live metrics
 import re      # For finding PID
 from pathlib import Path  # Import Path
-from utils.helpers import is_screen_session_running, get_screen_session_name, check_dependencies, get_server_directory, run_command  # To find log file
+from utils.helpers import (
+    is_screen_session_running, get_screen_session_name,
+    check_dependencies, get_server_directory, run_command,
+    get_config_dir  # Import new Termux-aware helper
+)
 
 # Add imports for custom exceptions
-from core.exceptions import MSMError, APIError, DownloadError, ConfigError
+from core.exceptions import (
+    MSMError, APIError, DownloadError, ConfigError,
+    BackupError, TunnelError, DatabaseError, ServerError
+)
 from core.logger import EnhancedLogger
 from core.database import DatabaseManager
 from core.monitoring import PerformanceMonitor
@@ -32,10 +39,10 @@ from utils.decorators import handle_errors, performance_monitor
 
 VERSION = "Unified"
 
-# Default locations
-CONFIG_DIR = os.path.expanduser("~/.config/msm")
-LOG_FILE = os.path.join(CONFIG_DIR, "msm.log")
-DB_FILE = os.path.join(CONFIG_DIR, "msm.db")
+# Default locations (Termux-aware)
+CONFIG_DIR = get_config_dir()
+LOG_FILE = CONFIG_DIR / "msm.log"
+DB_FILE = CONFIG_DIR / "msm.db"
 
 # Globals
 logger = None

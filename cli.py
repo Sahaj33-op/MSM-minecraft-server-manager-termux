@@ -386,9 +386,82 @@ def show_server_console(server_mgr, name):
     """Show server console for a server."""
     # Set the current server
     ConfigManager.set_current_server(name)
-    
+
     # Use the server manager's console method
     server_mgr.show_console()
+
+def show_health_check(monitor, name=None):
+    """Show system and server health check."""
+    health = monitor.get_health_check(name)
+
+    # Print overall status with color
+    status = health['status']
+    status_colors = {'healthy': '\033[92m', 'degraded': '\033[93m', 'unhealthy': '\033[91m'}
+    color = status_colors.get(status, '\033[0m')
+    reset = '\033[0m'
+
+    print(f"\n{'='*60}")
+    print(f"Health Check - {health['timestamp']}")
+    print(f"{'='*60}")
+    print(f"Overall Status: {color}{status.upper()}{reset}")
+
+    # System info
+    if health.get('system'):
+        sys_info = health['system']
+        print(f"\nSystem:")
+        print(f"  CPU Usage:        {sys_info.get('cpu_percent', 'N/A')}%")
+        print(f"  Memory Usage:     {sys_info.get('memory_percent', 'N/A')}%")
+        print(f"  Memory Available: {sys_info.get('memory_available_mb', 'N/A')} MB")
+        print(f"  Disk Usage:       {sys_info.get('disk_percent', 'N/A')}%")
+        print(f"  Disk Free:        {sys_info.get('disk_free_gb', 'N/A')} GB")
+
+    # Server info if requested
+    if name and health.get('server'):
+        srv_info = health['server']
+        print(f"\nServer '{name}':")
+        print(f"  Status:           {srv_info.get('status', 'unknown')}")
+        print(f"  Process Running:  {srv_info.get('process_running', False)}")
+        print(f"  Monitoring:       {srv_info.get('monitoring_active', False)}")
+
+    # Warnings
+    if health.get('warnings'):
+        print(f"\n\033[93mWarnings:{reset}")
+        for warning in health['warnings']:
+            print(f"  - {warning}")
+
+    # Errors
+    if health.get('errors'):
+        print(f"\n\033[91mErrors:{reset}")
+        for error in health['errors']:
+            print(f"  - {error}")
+
+    print()
+
+def show_database_info(db):
+    """Show database information and statistics."""
+    info = db.get_database_info()
+
+    print(f"\n{'='*60}")
+    print("Database Information")
+    print(f"{'='*60}")
+    print(f"Path:            {info.get('db_path', 'N/A')}")
+    print(f"Size:            {info.get('db_size_mb', 0):.2f} MB")
+    print(f"Schema Version:  {info.get('schema_version', 'N/A')}")
+    print(f"Target Version:  {info.get('target_version', 'N/A')}")
+
+    needs_migration = info.get('needs_migration', False)
+    if needs_migration:
+        print(f"\033[93mMigration Required: Yes\033[0m")
+    else:
+        print(f"Migration Status: Up to date")
+
+    # Row counts
+    if info.get('row_counts'):
+        print(f"\nTable Statistics:")
+        for table, count in info['row_counts'].items():
+            print(f"  {table}: {count} rows")
+
+    print()
 
 def main():
     """Main CLI entry point."""
@@ -495,7 +568,14 @@ def main():
     # Statistics command
     stats_parser = subparsers.add_parser('stats', help='Show server statistics')
     stats_parser.add_argument('name', help='Server name')
-    
+
+    # Health check command
+    health_parser = subparsers.add_parser('health', help='Show system and server health check')
+    health_parser.add_argument('--server', help='Optional server name for server-specific health')
+
+    # Database info command
+    subparsers.add_parser('db-info', help='Show database information and statistics')
+
     args = parser.parse_args()
     
     # Initialize the system
@@ -561,13 +641,19 @@ def main():
         
         elif args.command == 'stats':
             show_statistics(db, args.name)
-        
+
         elif args.command == 'dashboard':
             show_performance_dashboard(server_mgr, args.name)
-        
+
         elif args.command == 'console':
             show_server_console(server_mgr, args.name)
-        
+
+        elif args.command == 'health':
+            show_health_check(monitor, args.server)
+
+        elif args.command == 'db-info':
+            show_database_info(db)
+
         else:
             parser.print_help()
     
