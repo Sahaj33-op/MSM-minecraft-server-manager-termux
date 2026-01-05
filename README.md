@@ -273,7 +273,8 @@ MSM-minecraft-server-manager-termux/
 └── tests/                  # Unit tests
     ├── test_server_manager.py
     ├── test_server_manager_enhanced.py
-    └── test_tunnel_manager_enhanced.py
+    ├── test_tunnel_manager_enhanced.py
+    └── test_core_modules.py
 ```
 
 ### Component Responsibilities
