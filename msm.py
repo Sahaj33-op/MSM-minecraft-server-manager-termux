@@ -74,7 +74,7 @@ SERVER_FLAVORS = {
         "jar_pattern": "paper-{version}-{build}.jar",
         "default_port": 25565,
         "type": "java",
-        "icon": "ðŸ“‹",
+        "icon": "📋",
         "min_ram": 512
     },
     "purpur": {
@@ -86,7 +86,7 @@ SERVER_FLAVORS = {
         "jar_pattern": "purpur-{version}-{build}.jar",
         "default_port": 25565,
         "type": "java",
-        "icon": "ðŸ’œ",
+        "icon": "💜",
         "min_ram": 512
     },
     "folia": {
@@ -98,7 +98,7 @@ SERVER_FLAVORS = {
         "jar_pattern": "folia-{version}-{build}.jar",
         "default_port": 25565,
         "type": "java",
-        "icon": "ðŸŒ¿",
+        "icon": "🌿",
         "min_ram": 1024
     },
     "vanilla": {
@@ -110,7 +110,7 @@ SERVER_FLAVORS = {
         "jar_pattern": "server.jar",
         "default_port": 25565,
         "type": "java",
-        "icon": "ðŸ¦",
+        "icon": "🍦",
         "min_ram": 512
     },
     "fabric": {
@@ -122,7 +122,7 @@ SERVER_FLAVORS = {
         "jar_pattern": "fabric-server-launch.jar",
         "default_port": 25565,
         "type": "java",
-        "icon": "ðŸ§µ",
+        "icon": "🧵",
         "min_ram": 768
     },
     "quilt": {
@@ -134,7 +134,7 @@ SERVER_FLAVORS = {
         "jar_pattern": "quilt-server-launch.jar",
         "default_port": 25565,
         "type": "java",
-        "icon": "ðŸ§¶",
+        "icon": "🧶",
         "min_ram": 768
     },
     "pocketmine": {
@@ -146,7 +146,7 @@ SERVER_FLAVORS = {
         "jar_pattern": "PocketMine-MP.phar",
         "default_port": 19132,
         "type": "php",
-        "icon": "ðŸ“±",
+        "icon": "📱",
         "min_ram": 256
     }
 }
@@ -1270,19 +1270,19 @@ def main():
         
         print_header()
         
-        status = f"{C.GREEN}â—ONLINE{C.RESET}" if is_server_running(screen_name) else f"{C.RED}â—OFFLINE{C.RESET}"
-        flavor_icon = SERVER_FLAVORS.get(flavor, {}).get('icon', 'â“')
+        status = f"{C.GREEN}● ONLINE{C.RESET}" if is_server_running(screen_name) else f"{C.RED}● OFFLINE{C.RESET}"
+        flavor_icon = SERVER_FLAVORS.get(flavor, {}).get('icon', '❓')
         flavor_name = SERVER_FLAVORS.get(flavor, {}).get('name', 'Unknown')
         
-        print(f"ðŸ“‹ Server: {C.CYAN}{current_server}{C.RESET} | Status: {status}")
+        print(f"📋 Server: {C.CYAN}{current_server}{C.RESET} | Status: {status}")
         print(f"   {flavor_icon} {flavor_name} {version}")
         
         menu_options = [
-            ("1", "ðŸš€", "Start Server"), ("2", "â¹ï¸", "Stop Server"), 
-            ("3", "ðŸ“¦", "Install/Update Server"), ("4", "âš™ï¸", "Configure Server"),
-            ("5", "ðŸ’»", "Server Console"), ("6", "ðŸ—„ï¸", "World Manager"),
-            ("7", "ðŸ“Š", "Statistics"), ("8", "âž•", "Create New Server"),
-            ("9", "ðŸ”„", "Switch Server"), ("0", "ðŸšª", "Exit")
+            ("1", "🚀", "Start Server"), ("2", "⏹️", "Stop Server"), 
+            ("3", "📦", "Install/Update Server"), ("4", "⚙️", "Configure Server"),
+            ("5", "💻", "Server Console"), ("6", "🌍", "World Manager"),
+            ("7", "📊", "Statistics"), ("8", "➕", "Create New Server"),
+            ("9", "🔄", "Switch Server"), ("0", "🚪", "Exit")
         ]
         
         print(f"\n{C.BOLD}Main Menu:{C.RESET}")
