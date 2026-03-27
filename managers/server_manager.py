@@ -3,48 +3,73 @@
 Server Manager - Unified from both branches
 Combines v1.1.0 modular design with main branch enterprise features
 """
+
 import os
 import re
-import time
 import shutil
-import urllib.request
-import urllib.error  # Add this import
 import subprocess
-import psutil  # Add missing psutil import
+import time
+import urllib.error  # Add this import
+import urllib.request
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
-from typing import Optional, Dict, List, Tuple, Any, Union
 
-# Add imports for custom exceptions
-from core.exceptions import DownloadError, ConfigError, APIError, ServerError
+import psutil  # Add missing psutil import
+
 from core.config import ConfigManager
 from core.database import DatabaseManager
+
+# Add imports for custom exceptions
+from core.exceptions import APIError, ConfigError, DownloadError, ServerError
 from core.monitoring import PerformanceMonitor
 from managers.api_client import (
-    PaperMCAPI, PurpurAPI, FoliaAPI, VanillaAPI, FabricAPI, QuiltAPI, PocketMineAPI
-)
-from utils.helpers import (
-    sanitize_input, get_java_path, is_screen_session_running,
-    run_command, get_server_directory, get_screen_session_name,
-    validate_port, is_port_in_use, validate_ram_allocation, validate_max_players,
-    validate_server_name, validate_minecraft_version, invalidate_screen_session_cache
+    FabricAPI,
+    FoliaAPI,
+    PaperMCAPI,
+    PocketMineAPI,
+    PurpurAPI,
+    QuiltAPI,
+    VanillaAPI,
 )
 from ui.interface import UI
+from utils.helpers import (
+    get_java_path,
+    get_screen_session_name,
+    get_server_directory,
+    invalidate_screen_session_cache,
+    is_port_in_use,
+    is_screen_session_running,
+    run_command,
+    sanitize_input,
+    validate_max_players,
+    validate_minecraft_version,
+    validate_port,
+    validate_ram_allocation,
+    validate_server_name,
+)
 
 TRUSTED_DOWNLOAD_DOMAINS = {
-    'api.papermc.io', 'papermc.io',
-    'api.purpurmc.org', 'purpurmc.org',
-    'meta.fabricmc.net', 'maven.fabricmc.net',
-    'meta.quiltmc.org',
-    'piston-meta.mojang.com', 'piston-data.mojang.com',
-    'github.com', 'api.github.com',
-    'objects.githubusercontent.com', 'release-assets.githubusercontent.com',
-    'githubusercontent.com'
+    "api.papermc.io",
+    "papermc.io",
+    "api.purpurmc.org",
+    "purpurmc.org",
+    "meta.fabricmc.net",
+    "maven.fabricmc.net",
+    "meta.quiltmc.org",
+    "piston-meta.mojang.com",
+    "piston-data.mojang.com",
+    "github.com",
+    "api.github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+    "githubusercontent.com",
 }
+
 
 class ServerManager:
     """Unified server management combining both branch features"""
-    
+
     SERVER_TYPES = {
         "1": ("PaperMC", PaperMCAPI, "paper"),
         "2": ("Purpur", PurpurAPI, "purpur"),
@@ -52,20 +77,36 @@ class ServerManager:
         "4": ("Fabric", FabricAPI, "fabric"),
         "5": ("Quilt", QuiltAPI, "quilt"),
         "6": ("Vanilla", VanillaAPI, "vanilla"),
-        "7": ("PocketMine-MP", PocketMineAPI, "pocketmine")
+        "7": ("PocketMine-MP", PocketMineAPI, "pocketmine"),
     }
-    
+
     # Complete server.properties settings
     SERVER_PROPERTIES_SETTINGS = [
-        'gamemode', 'difficulty', 'pvp', 'white-list', 'view-distance',
-        'max-players', 'motd', 'port', 'online-mode', 'allow-flight',
-        'spawn-animals', 'spawn-monsters', 'spawn-npcs', 'enable-command-block',
-        'max-world-size', 'player-idle-timeout', 'level-type', 'level-name'
+        "gamemode",
+        "difficulty",
+        "pvp",
+        "white-list",
+        "view-distance",
+        "max-players",
+        "motd",
+        "port",
+        "online-mode",
+        "allow-flight",
+        "spawn-animals",
+        "spawn-monsters",
+        "spawn-npcs",
+        "enable-command-block",
+        "max-world-size",
+        "player-idle-timeout",
+        "level-type",
+        "level-name",
     ]
-    
-    def __init__(self, db_manager: DatabaseManager, logger, monitor: PerformanceMonitor):
+
+    def __init__(
+        self, db_manager: DatabaseManager, logger, monitor: PerformanceMonitor
+    ):
         """Initialize the ServerManager with required dependencies.
-        
+
         Args:
             db_manager: Database manager instance for storing server data
             logger: Logger instance for logging messages
@@ -76,37 +117,38 @@ class ServerManager:
         self.monitor = monitor
         self.ui = UI()
         self.current_session_id = None
-        
+
         # Set the logger for all API clients
         from managers.api_client import BaseAPI
+
         BaseAPI.set_logger(logger)
-    
+
     def list_servers(self) -> List[str]:
         """List all configured servers.
-        
+
         Returns:
             List of server names
         """
         config = ConfigManager.load()
-        return list(config.get('servers', {}).keys())
-    
+        return list(config.get("servers", {}).keys())
+
     def get_current_server(self) -> Optional[str]:
         """Get currently selected server.
-        
+
         Returns:
             Name of the current server or None if no server is selected
         """
         return ConfigManager.get_current_server()
-    
+
     def set_current_server(self, name: str):
         """Set current server.
-        
+
         Args:
             name: Name of the server to set as current
         """
         ConfigManager.set_current_server(name)
-        self.logger.log('INFO', f'Switched to server: {name}')
-    
+        self.logger.log("INFO", f"Switched to server: {name}")
+
     def create_server(self, name: str) -> bool:
         """Create new server configuration.
 
@@ -119,54 +161,54 @@ class ServerManager:
         # Validate server name first
         is_valid, error_msg = validate_server_name(name)
         if not is_valid:
-            self.logger.log('ERROR', f'Invalid server name: {error_msg}')
+            self.logger.log("ERROR", f"Invalid server name: {error_msg}")
             return False
 
         safe_name = sanitize_input(name)
         server_dir = get_server_directory(safe_name)
 
         if server_dir.exists():
-            self.logger.log('ERROR', f'Server {safe_name} already exists')
+            self.logger.log("ERROR", f"Server {safe_name} already exists")
             return False
 
         try:
             server_dir.mkdir(parents=True, exist_ok=True)
 
             server_config = {
-                'server_flavor': None,
-                'server_version': None,
-                'ram_mb': 2048,
-                'auto_restart': False,
-                'server_settings': {
-                    'motd': f'{safe_name} Server',
-                    'port': 25565,
-                    'max-players': 20,
-                    'gamemode': 'survival',
-                    'difficulty': 'normal',
-                    'pvp': True,
-                    'white-list': False,
-                    'view-distance': 10,
-                    'online-mode': True,
-                    'allow-flight': False,
-                    'spawn-animals': True,
-                    'spawn-monsters': True,
-                    'spawn-npcs': True,
-                    'enable-command-block': False,
-                    'max-world-size': 29999984,
-                    'player-idle-timeout': 0,
-                    'level-type': 'default',
-                    'level-name': 'world'
-                }
+                "server_flavor": None,
+                "server_version": None,
+                "ram_mb": 2048,
+                "auto_restart": False,
+                "server_settings": {
+                    "motd": f"{safe_name} Server",
+                    "port": 25565,
+                    "max-players": 20,
+                    "gamemode": "survival",
+                    "difficulty": "normal",
+                    "pvp": True,
+                    "white-list": False,
+                    "view-distance": 10,
+                    "online-mode": True,
+                    "allow-flight": False,
+                    "spawn-animals": True,
+                    "spawn-monsters": True,
+                    "spawn-npcs": True,
+                    "enable-command-block": False,
+                    "max-world-size": 29999984,
+                    "player-idle-timeout": 0,
+                    "level-type": "default",
+                    "level-name": "world",
+                },
             }
 
             ConfigManager.save_server_config(safe_name, server_config)
             self.set_current_server(safe_name)
-            
-            self.logger.log('SUCCESS', f'Created server: {safe_name}')
+
+            self.logger.log("SUCCESS", f"Created server: {safe_name}")
             return True
-            
+
         except Exception as e:
-            self.logger.log('ERROR', f'Failed to create server: {e}')
+            self.logger.log("ERROR", f"Failed to create server: {e}")
             return False
 
     def _check_eula_acceptance(self, server_name: str) -> bool:
@@ -183,9 +225,9 @@ class ServerManager:
         """
         # Check if EULA already accepted for this server
         config = ConfigManager.load()
-        server_config = config.get('servers', {}).get(server_name, {})
+        server_config = config.get("servers", {}).get(server_name, {})
 
-        if server_config.get('eula_accepted', False):
+        if server_config.get("eula_accepted", False):
             return True
 
         # Display EULA agreement
@@ -201,23 +243,25 @@ class ServerManager:
 
         # Prompt user
         while True:
-            response = input("Do you agree to the Minecraft EULA? (yes/no): ").strip().lower()
+            response = (
+                input("Do you agree to the Minecraft EULA? (yes/no): ").strip().lower()
+            )
 
-            if response in ['yes', 'y']:
+            if response in ["yes", "y"]:
                 # Save acceptance to config
-                if 'servers' not in config:
-                    config['servers'] = {}
-                if server_name not in config['servers']:
-                    config['servers'][server_name] = {}
+                if "servers" not in config:
+                    config["servers"] = {}
+                if server_name not in config["servers"]:
+                    config["servers"][server_name] = {}
 
-                config['servers'][server_name]['eula_accepted'] = True
+                config["servers"][server_name]["eula_accepted"] = True
                 ConfigManager.save(config)
 
-                self.logger.log('INFO', f'EULA accepted for server: {server_name}')
+                self.logger.log("INFO", f"EULA accepted for server: {server_name}")
                 return True
 
-            elif response in ['no', 'n']:
-                self.logger.log('WARNING', 'EULA not accepted - server cannot start')
+            elif response in ["no", "n"]:
+                self.logger.log("WARNING", "EULA not accepted - server cannot start")
                 raise ConfigError(
                     "Minecraft EULA must be accepted to run a server. "
                     "Visit https://aka.ms/MinecraftEULA for more information."
@@ -232,170 +276,197 @@ class ServerManager:
             True if server was started successfully, False otherwise
         """
         # Check if screen is installed
-        if not shutil.which('screen'):
-            self.logger.log('ERROR', 'Screen is not installed. Install with: pkg install screen')
+        if not shutil.which("screen"):
+            self.logger.log(
+                "ERROR", "Screen is not installed. Install with: pkg install screen"
+            )
             return False
 
         current_server = self.get_current_server()
         if not current_server:
-            self.logger.log('ERROR', 'No server selected')
+            self.logger.log("ERROR", "No server selected")
             return False
-        
+
         server_config = ConfigManager.load_server_config(current_server)
-        flavor = server_config.get('server_flavor')
-        version = server_config.get('server_version')
-        
+        flavor = server_config.get("server_flavor")
+        version = server_config.get("server_version")
+
         if not flavor or not version:
-            self.logger.log('ERROR', 'Server not installed or configured. Please install first.')
+            self.logger.log(
+                "ERROR", "Server not installed or configured. Please install first."
+            )
             return False
-        
+
         server_dir = get_server_directory(current_server)
         screen_name = get_screen_session_name(current_server)
-        
+
         if is_screen_session_running(screen_name):
-            self.logger.log('WARNING', 'Server is already running')
+            self.logger.log("WARNING", "Server is already running")
             return False
 
         # Check EULA acceptance for Java-based servers (not PocketMine)
-        if flavor != 'pocketmine':
+        if flavor != "pocketmine":
             try:
                 self._check_eula_acceptance(current_server)
             except ConfigError as e:
-                self.logger.log('ERROR', str(e))
+                self.logger.log("ERROR", str(e))
                 return False
 
         # --- Determine startup command based on flavor ---
         startup_command = []
-        ram_mb = server_config.get('ram_mb', 1024) # Default RAM
+        ram_mb = server_config.get("ram_mb", 1024)  # Default RAM
 
         if flavor == "pocketmine":
             # Find .phar file
-            phar_files = list(server_dir.glob('*.phar'))
+            phar_files = list(server_dir.glob("*.phar"))
             if not phar_files:
-                self.logger.log('ERROR', 'PocketMine PHAR file not found')
+                self.logger.log("ERROR", "PocketMine PHAR file not found")
                 return False
             phar_file = phar_files[0]
             # Check if PHP is available
-            php_path = shutil.which('php')
+            php_path = shutil.which("php")
             if not php_path:
-                 self.logger.log('ERROR', 'PHP not found. Install with: pkg install php')
-                 return False
+                self.logger.log("ERROR", "PHP not found. Install with: pkg install php")
+                return False
             startup_command = [php_path, str(phar_file)]
             # Note: PocketMine doesn't use RAM args like Java
             # Ensure eula.txt is NOT created for PocketMine
-            eula_file = server_dir / 'eula.txt'
-            if eula_file.exists(): eula_file.unlink() # Remove if it exists by mistake
+            eula_file = server_dir / "eula.txt"
+            if eula_file.exists():
+                eula_file.unlink()  # Remove if it exists by mistake
 
-        else: # Assume Java-based server (Paper, Purpur, Vanilla, etc.)
+        else:  # Assume Java-based server (Paper, Purpur, Vanilla, etc.)
             # Find server JAR
-            jar_files = list(server_dir.glob('*.jar'))
+            jar_files = list(server_dir.glob("*.jar"))
             if not jar_files:
                 # Special check for Fabric/Quilt that might use different names initially
-                potential_launchers = list(server_dir.glob('fabric-server-launch.jar')) + \
-                                      list(server_dir.glob('quilt-server-launch.jar'))
+                potential_launchers = list(
+                    server_dir.glob("fabric-server-launch.jar")
+                ) + list(server_dir.glob("quilt-server-launch.jar"))
                 if potential_launchers:
                     jar_files = potential_launchers
-                
+
             if not jar_files:
-                self.logger.log('ERROR', 'No server JAR found')
+                self.logger.log("ERROR", "No server JAR found")
                 return False
-            
-            jar_file = jar_files[0] # Use the first one found
-            java_path = get_java_path(version) 
-            
+
+            jar_file = jar_files[0]  # Use the first one found
+            java_path = get_java_path(version)
+
             if not java_path:
-                self.logger.log('ERROR', f'Required Java version for {version} not found.')
+                self.logger.log(
+                    "ERROR", f"Required Java version for {version} not found."
+                )
                 return False
 
             # Write eula.txt file (user has already accepted via _check_eula_acceptance)
-            eula_file = server_dir / 'eula.txt'
+            eula_file = server_dir / "eula.txt"
             try:
-                eula_file.write_text('eula=true\n')
+                eula_file.write_text("eula=true\n")
             except Exception as e:
-                self.logger.log('WARNING', f'Could not write EULA file: {e}')
+                self.logger.log("WARNING", f"Could not write EULA file: {e}")
                 # Proceed anyway, server might handle it
 
             # Create or update server.properties
-            self._update_server_properties(current_server, server_config.get('server_settings', {}))
+            self._update_server_properties(
+                current_server, server_config.get("server_settings", {})
+            )
 
             # Build command
             java_args = [
-                java_path, f'-Xmx{ram_mb}M', f'-Xms{ram_mb}M',
-                '-XX:+UseG1GC', # Add other recommended flags if desired
-                '-jar', str(jar_file), 'nogui'
+                java_path,
+                f"-Xmx{ram_mb}M",
+                f"-Xms{ram_mb}M",
+                "-XX:+UseG1GC",  # Add other recommended flags if desired
+                "-jar",
+                str(jar_file),
+                "nogui",
             ]
             startup_command = java_args
 
         # --- End of command determination ---
 
         if not startup_command:
-             self.logger.log('ERROR', 'Could not determine startup command.')
-             return False
+            self.logger.log("ERROR", "Could not determine startup command.")
+            return False
 
-        screen_cmd = ['screen', '-dmS', screen_name] + startup_command
-        
+        screen_cmd = ["screen", "-dmS", screen_name] + startup_command
+
         try:
             # Pass cwd=str(server_dir) to run command inside the server directory
             returncode, stdout, stderr = run_command(screen_cmd, cwd=str(server_dir))
             if returncode == 0:
                 invalidate_screen_session_cache(screen_name)
-                # Give server time to initialize
-                time.sleep(5)
+                # Give screen a moment to register before polling startup state
+                time.sleep(1)
 
                 # Verify server actually started
                 if not self._verify_server_running(current_server, flavor):
-                    self.logger.log('ERROR', f'Server {current_server} failed to start - check server logs')
+                    self.logger.log(
+                        "ERROR",
+                        f"Server {current_server} failed to start - check server logs",
+                    )
                     # Try to stop the failed session
                     try:
-                        run_command(['screen', '-X', '-S', screen_name, 'quit'])
+                        run_command(["screen", "-X", "-S", screen_name, "quit"])
                     except:
                         pass
                     return False
 
-                self.logger.log('SUCCESS', f'Server {current_server} started and verified')
-                
+                self.logger.log(
+                    "SUCCESS", f"Server {current_server} started and verified"
+                )
+
                 # Log session start
                 try:
-                    self.current_session_id = self.db.log_session_start(current_server, flavor, version)
+                    self.current_session_id = self.db.log_session_start(
+                        current_server, flavor, version
+                    )
                 except Exception as db_error:
-                    self.logger.log('ERROR', f'Failed to log session start: {db_error}')
+                    self.logger.log("ERROR", f"Failed to log session start: {db_error}")
                     # Continue despite database error
-                
+
                 # Start monitoring
-                time.sleep(3) # Give server time to start
-                
+                time.sleep(3)  # Give server time to start
+
                 pid = 0
                 try:
                     # More robust PID finding for screen
-                    result = run_command(['screen', '-ls'], capture_output=True)
+                    result = run_command(["screen", "-ls"], capture_output=True)
                     if result[0] == 0:
-                        match = re.search(rf'(\d+)\.{screen_name}\s', result[1])
+                        match = re.search(rf"(\d+)\.{screen_name}\s", result[1])
                         if match:
                             pid = int(match.group(1))
                 except Exception as e:
-                     self.logger.log('WARNING', f'Could not reliably get PID for monitoring: {e}')
+                    self.logger.log(
+                        "WARNING", f"Could not reliably get PID for monitoring: {e}"
+                    )
 
                 if pid > 0:
                     try:
                         self.monitor.start_monitoring(current_server, pid)
                     except Exception as monitor_error:
-                        self.logger.log('ERROR', f'Failed to start monitoring: {monitor_error}')
+                        self.logger.log(
+                            "ERROR", f"Failed to start monitoring: {monitor_error}"
+                        )
                         # Continue despite monitoring error
                 else:
-                     self.logger.log('WARNING', 'Could not find server process PID for monitoring.')
+                    self.logger.log(
+                        "WARNING", "Could not find server process PID for monitoring."
+                    )
 
                 return True
             else:
-                self.logger.log('ERROR', f'Failed to start server in screen: {stderr}')
+                self.logger.log("ERROR", f"Failed to start server in screen: {stderr}")
                 return False
         except subprocess.SubprocessError as e:
-            self.logger.log('ERROR', f'Subprocess error starting server: {e}')
+            self.logger.log("ERROR", f"Subprocess error starting server: {e}")
             return False
         except OSError as e:
-            self.logger.log('ERROR', f'OS error starting server: {e}')
+            self.logger.log("ERROR", f"OS error starting server: {e}")
             return False
         except Exception as e:
-            self.logger.log('ERROR', f'Unexpected error starting server: {e}')
+            self.logger.log("ERROR", f"Unexpected error starting server: {e}")
             return False
 
     def _verify_server_running(self, server_name: str, flavor: str) -> bool:
@@ -410,98 +481,119 @@ class ServerManager:
         """
         screen_name = get_screen_session_name(server_name)
 
-        # Check screen session exists
-        result = run_command(['screen', '-list'], capture_output=True)
-        if screen_name not in result[1]:
-            self.logger.log('ERROR', f'Screen session not found: {screen_name}')
-            return False
-
-        # Determine process name based on flavor
-        if flavor == 'pocketmine':
-            process_check = 'php'
+        if flavor == "pocketmine":
+            process_check = "php"
         else:
-            process_check = 'java'
+            process_check = "java"
 
-        # Check if Java/PHP process exists for this server
+        server_dir = str(get_server_directory(server_name))
+        deadline = time.time() + 30
+        last_screen_output = ""
+
         try:
-            for proc in psutil.process_iter(['name', 'cmdline']):
-                try:
-                    proc_info = proc.info
-                    if not proc_info['name'] or not proc_info['cmdline']:
-                        continue
-
-                    proc_name = proc_info['name'].lower()
-                    cmdline = ' '.join(proc_info['cmdline'])
-
-                    # Check if it's the right process type and references our server
-                    if process_check in proc_name and (server_name in cmdline or screen_name in cmdline):
-                        self.logger.log('INFO', f'Verified {process_check} process running for {server_name}')
-                        return True
-
-                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            while time.time() < deadline:
+                result = run_command(["screen", "-list"], capture_output=True)
+                last_screen_output = result[1]
+                if screen_name not in last_screen_output:
+                    time.sleep(1)
                     continue
 
-            self.logger.log('WARNING', f'No {process_check} process found for {server_name}')
+                for proc in psutil.process_iter(["name", "cmdline"]):
+                    try:
+                        proc_info = proc.info
+                        proc_name = (proc_info.get("name") or "").lower()
+                        cmdline_list = proc_info.get("cmdline") or []
+                        if not proc_name or not cmdline_list:
+                            continue
+
+                        cmdline = " ".join(cmdline_list)
+                        if process_check in proc_name and (
+                            server_dir in cmdline
+                            or server_name in cmdline
+                            or screen_name in cmdline
+                        ):
+                            self.logger.log(
+                                "INFO",
+                                f"Verified {process_check} process running for {server_name}",
+                            )
+                            return True
+                    except (
+                        psutil.NoSuchProcess,
+                        psutil.AccessDenied,
+                        psutil.ZombieProcess,
+                    ):
+                        continue
+
+                time.sleep(2)
+
+            if screen_name in last_screen_output:
+                self.logger.log(
+                    "WARNING",
+                    f"No {process_check} process found yet for {server_name}, but the screen session is still active",
+                )
+                return True
+
+            self.logger.log("ERROR", f"Screen session not found: {screen_name}")
             return False
 
         except Exception as e:
-            self.logger.log('WARNING', f'Error verifying server process: {e}')
+            self.logger.log("WARNING", f"Error verifying server process: {e}")
             return False
 
     def _update_server_properties(self, server_name: str, settings: dict):
         """Update server.properties file with given settings.
-        
+
         Args:
             server_name: Name of the server
             settings: Dictionary of settings to update
         """
         server_dir = get_server_directory(server_name)
-        properties_file = server_dir / 'server.properties'
-        
+        properties_file = server_dir / "server.properties"
+
         # Read existing properties or create new ones
         properties = {}
         if properties_file.exists():
-            with open(properties_file, 'r') as f:
+            with open(properties_file, "r") as f:
                 for line in f:
-                    if '=' in line and not line.strip().startswith('#'):
-                        key, value = line.strip().split('=', 1)
+                    if "=" in line and not line.strip().startswith("#"):
+                        key, value = line.strip().split("=", 1)
                         properties[key] = value
-        
+
         # Update with new settings
         properties.update(settings)
-        
+
         # Write back to file
-        with open(properties_file, 'w') as f:
-            f.write('# Minecraft server properties\n')
-            f.write(f'# Updated {time.strftime("%a %b %d %H:%M:%S %Z %Y")}\n')
+        with open(properties_file, "w") as f:
+            f.write("# Minecraft server properties\n")
+            f.write(f"# Updated {time.strftime('%a %b %d %H:%M:%S %Z %Y')}\n")
             for key, value in properties.items():
                 if isinstance(value, bool):
-                    f.write(f'{key}={str(value).lower()}\n')
+                    f.write(f"{key}={str(value).lower()}\n")
                 else:
-                    f.write(f'{key}={value}\n')
-    
+                    f.write(f"{key}={value}\n")
+
     def stop_server(self) -> bool:
         """Stop the current server gracefully.
-        
+
         Returns:
             True if server was stopped successfully, False otherwise
         """
         current_server = self.get_current_server()
         if not current_server:
-            self.logger.log('ERROR', 'No server selected')
+            self.logger.log("ERROR", "No server selected")
             return False
-        
+
         screen_name = get_screen_session_name(current_server)
-        
+
         if not is_screen_session_running(screen_name):
-            self.logger.log('INFO', 'Server is not running')
+            self.logger.log("INFO", "Server is not running")
             return False
-        
+
         try:
             # Send stop command
-            stop_cmd = ['screen', '-S', screen_name, '-X', 'stuff', 'stop\n']
+            stop_cmd = ["screen", "-S", screen_name, "-X", "stuff", "stop\n"]
             returncode, stdout, stderr = run_command(stop_cmd)
-            
+
             if returncode == 0:
                 invalidate_screen_session_cache(screen_name)
                 # Wait for graceful shutdown
@@ -512,91 +604,105 @@ class ServerManager:
                     time.sleep(1)
                 else:
                     # Force quit if still running
-                    self.logger.log('WARNING', 'Server did not stop gracefully, forcing quit')
-                    force_cmd = ['screen', '-S', screen_name, '-X', 'quit']
+                    self.logger.log(
+                        "WARNING", "Server did not stop gracefully, forcing quit"
+                    )
+                    force_cmd = ["screen", "-S", screen_name, "-X", "quit"]
                     run_command(force_cmd)
                     invalidate_screen_session_cache(screen_name)
-                
+
                 # Stop monitoring
                 try:
                     self.monitor.stop_monitoring(current_server)
                 except Exception as monitor_error:
-                    self.logger.log('ERROR', f'Failed to stop monitoring: {monitor_error}')
-                
+                    self.logger.log(
+                        "ERROR", f"Failed to stop monitoring: {monitor_error}"
+                    )
+
                 # Log session end
                 if self.current_session_id:
                     try:
                         self.db.log_session_end(self.current_session_id)
                     except Exception as db_error:
-                        self.logger.log('ERROR', f'Failed to log session end: {db_error}')
+                        self.logger.log(
+                            "ERROR", f"Failed to log session end: {db_error}"
+                        )
                     finally:
                         self.current_session_id = None
-                
-                self.logger.log('SUCCESS', f'Server {current_server} stopped')
+
+                self.logger.log("SUCCESS", f"Server {current_server} stopped")
                 return True
             else:
-                self.logger.log('ERROR', f'Failed to stop server: {stderr}')
+                self.logger.log("ERROR", f"Failed to stop server: {stderr}")
                 return False
         except subprocess.SubprocessError as e:
-            self.logger.log('ERROR', f'Subprocess error stopping server: {e}')
+            self.logger.log("ERROR", f"Subprocess error stopping server: {e}")
             return False
         except Exception as e:
-            self.logger.log('ERROR', f'Unexpected error stopping server: {e}')
+            self.logger.log("ERROR", f"Unexpected error stopping server: {e}")
             return False
-    
+
     def install_server_menu(self):
         """Interactive server installation menu"""
         current_server = self.get_current_server()
         if not current_server:
-            self.ui.print_error('No server selected')
+            self.ui.print_error("No server selected")
             return
-        
+
         self.ui.clear_screen()
         self.ui.print_header()
-        print(f"{self.ui.colors.BOLD}Install/Update Server: {current_server}{self.ui.colors.RESET}\n")
-        
+        print(
+            f"{self.ui.colors.BOLD}Install/Update Server: {current_server}{self.ui.colors.RESET}\n"
+        )
+
         # Show server types
         print("Select server type:")
         for key, (name, api_class, flavor_key) in self.SERVER_TYPES.items():
             print(f" {key}. {name}")
-        
-        choice = input(f"\n{self.ui.colors.YELLOW}Select server type (1-7): {self.ui.colors.RESET}").strip()
-        
+
+        choice = input(
+            f"\n{self.ui.colors.YELLOW}Select server type (1-7): {self.ui.colors.RESET}"
+        ).strip()
+
         if choice not in self.SERVER_TYPES:
-            self.ui.print_error('Invalid selection')
-            input('Press Enter to continue...')
+            self.ui.print_error("Invalid selection")
+            input("Press Enter to continue...")
             return
-        
+
         server_type_name, api_class, flavor_key = self.SERVER_TYPES[choice]
-        
+
         # Get versions with error handling
-        self.ui.print_info(f'Fetching {server_type_name} versions...')
+        self.ui.print_info(f"Fetching {server_type_name} versions...")
         try:
             versions = api_class.get_versions()
         except APIError as e:
-            self.ui.print_error(f'Failed to fetch {server_type_name} versions: {e}')
-            input('Press Enter to continue...')
+            self.ui.print_error(f"Failed to fetch {server_type_name} versions: {e}")
+            input("Press Enter to continue...")
             return
         except Exception as e:
-            self.ui.print_error(f'Unexpected error fetching {server_type_name} versions: {e}')
-            input('Press Enter to continue...')
+            self.ui.print_error(
+                f"Unexpected error fetching {server_type_name} versions: {e}"
+            )
+            input("Press Enter to continue...")
             return
-        
+
         if not versions:
-            self.ui.print_error(f'Failed to fetch {server_type_name} versions')
-            input('Press Enter to continue...')
+            self.ui.print_error(f"Failed to fetch {server_type_name} versions")
+            input("Press Enter to continue...")
             return
-        
+
         # Show version selection
         print(f"\nAvailable {server_type_name} versions:")
         recent_versions = versions[-10:] if len(versions) > 10 else versions
-        
+
         for i, version in enumerate(recent_versions, 1):
             print(f" {i}. {version}")
-        
+
         print(f"\nLatest: {versions[-1]}")
-        version_choice = input(f"Select version (1-{len(recent_versions)}) or Enter for latest: ").strip()
-        
+        version_choice = input(
+            f"Select version (1-{len(recent_versions)}) or Enter for latest: "
+        ).strip()
+
         if not version_choice:
             selected_version = versions[-1]
         else:
@@ -605,124 +711,171 @@ class ServerManager:
                 if 0 <= idx < len(recent_versions):
                     selected_version = recent_versions[idx]
                 else:
-                    self.ui.print_error('Invalid selection')
-                    input('Press Enter to continue...')
+                    self.ui.print_error("Invalid selection")
+                    input("Press Enter to continue...")
                     return
             except ValueError:
-                self.ui.print_error('Invalid input')
-                input('Press Enter to continue...')
+                self.ui.print_error("Invalid input")
+                input("Press Enter to continue...")
                 return
-        
+
         # Download server with error handling
         try:
-            self._download_server(current_server, server_type_name, api_class, selected_version, flavor_key)
-            self.ui.print_success(f'{server_type_name} {selected_version} installed successfully!')
+            self._download_server(
+                current_server,
+                server_type_name,
+                api_class,
+                selected_version,
+                flavor_key,
+            )
+            self.ui.print_success(
+                f"{server_type_name} {selected_version} installed successfully!"
+            )
         except DownloadError as e:
-            self.ui.print_error(f'Installation failed: {e}')
+            self.ui.print_error(f"Installation failed: {e}")
         except APIError as e:
-            self.ui.print_error(f'API error during installation: {e}')
+            self.ui.print_error(f"API error during installation: {e}")
         except Exception as e:
-            self.ui.print_error(f'Unexpected error during installation: {e}')
-        
-        input('Press Enter to continue...')
-    
-    def _download_server(self, server_name: str, server_type: str, api_class, version: str, flavor_key: str) -> bool:
+            self.ui.print_error(f"Unexpected error during installation: {e}")
+
+        input("Press Enter to continue...")
+
+    def _download_server(
+        self,
+        server_name: str,
+        server_type: str,
+        api_class,
+        version: str,
+        flavor_key: str,
+    ) -> bool:
         """Download and install server JAR or PHAR
-        
+
         Args:
             server_name: Name of the server
             server_type: Type of server (PaperMC, Purpur, etc.)
             api_class: API class to use for downloading
             version: Version to download
             flavor_key: Flavor key for the server
-            
+
         Returns:
             True if download was successful, False otherwise
-            
+
         Raises:
             DownloadError: If download fails
             APIError: If API call fails
         """
         server_dir = get_server_directory(server_name)
         jar_path = None  # Initialize jar_path
-        
+
         try:
             download_url = None
-            build_info = None # Store build info
-            target_filename = "server.jar" # Default for Java
+            build_info = None  # Store build info
+            target_filename = "server.jar"  # Default for Java
 
-            if hasattr(api_class, 'get_latest_build'):
+            if hasattr(api_class, "get_latest_loader"):
+                loader_version = api_class.get_latest_loader()
+                if not loader_version:
+                    raise DownloadError(
+                        f"Failed to resolve loader version for {server_type} {version}"
+                    )
+                download_url = api_class.get_download_url(version, loader_version)
+            elif hasattr(api_class, "get_latest_build"):
                 # Paper-like APIs
                 build_info = api_class.get_latest_build(version)
                 if build_info:
-                    if hasattr(api_class, 'get_download_url'):
-                        build_number = build_info.get('build')
+                    if hasattr(api_class, "get_download_url"):
+                        build_number = build_info.get("build")
                         if build_number:
-                            download_url = api_class.get_download_url(version, build_number)
+                            download_url = api_class.get_download_url(
+                                version, build_number
+                            )
                 else:
-                    raise DownloadError(f"Failed to get build info for {server_type} {version}")
-            elif hasattr(api_class, 'get_download_url'):
+                    raise DownloadError(
+                        f"Failed to get build info for {server_type} {version}"
+                    )
+            elif hasattr(api_class, "get_download_url"):
                 # Vanilla, Fabric/Quilt-style, and PocketMine APIs
                 download_url = api_class.get_download_url(version)
-                if flavor_key == 'pocketmine':
-                    url_name = Path(urlparse(download_url).path).name if download_url else ""
-                    target_filename = url_name if url_name.endswith('.phar') else "PocketMine-MP.phar"
+                if flavor_key == "pocketmine":
+                    url_name = (
+                        Path(urlparse(download_url).path).name if download_url else ""
+                    )
+                    target_filename = (
+                        url_name if url_name.endswith(".phar") else "PocketMine-MP.phar"
+                    )
                 else:
                     target_filename = "server.jar"
 
             if not download_url:
-                raise DownloadError(f"Could not generate download URL for {server_type} {version}")
+                raise DownloadError(
+                    f"Could not generate download URL for {server_type} {version}"
+                )
             if not self._validate_download_url(download_url):
                 raise DownloadError(f"Untrusted download domain: {download_url}")
 
             # Download the file
             jar_path = server_dir / target_filename
-            
-            self.logger.log('INFO', f'Downloading {server_type} {version} from {download_url}')
-            
+
+            self.logger.log(
+                "INFO", f"Downloading {server_type} {version} from {download_url}"
+            )
+
             # Use a request with a user agent
             req = urllib.request.Request(
-                download_url, 
-                headers={'User-Agent': 'MSM-Server-Manager'}
+                download_url, headers={"User-Agent": "MSM-Server-Manager"}
             )
-            
-            with urllib.request.urlopen(req, timeout=300) as response:  # 5 minute timeout
+
+            with urllib.request.urlopen(
+                req, timeout=300
+            ) as response:  # 5 minute timeout
                 final_url = response.geturl()
                 if not self._validate_download_url(final_url):
                     raise DownloadError(f"Untrusted download domain: {final_url}")
-                with open(jar_path, 'wb') as f:
+                with open(jar_path, "wb") as f:
                     shutil.copyfileobj(response, f)
-            
+
             # Verify download
             if not jar_path.exists() or jar_path.stat().st_size == 0:
-                raise DownloadError(f"Download failed or resulted in empty file for {server_type} {version}")
+                raise DownloadError(
+                    f"Download failed or resulted in empty file for {server_type} {version}"
+                )
 
             # Save server configuration
             server_config = ConfigManager.load_server_config(server_name)
-            server_config.update({
-                'server_flavor': flavor_key,
-                'server_version': version,
-                'server_build': build_info.get('build') if build_info else None,
-                'server_settings': server_config.get('server_settings', {})
-            })
-            
+            server_config.update(
+                {
+                    "server_flavor": flavor_key,
+                    "server_version": version,
+                    "server_build": build_info.get("build") if build_info else None,
+                    "server_settings": server_config.get("server_settings", {}),
+                }
+            )
+
             # Set default port based on server type
-            if 'server_settings' in server_config:
+            if "server_settings" in server_config:
                 if server_type == "PocketMine-MP":
-                    server_config['server_settings']['port'] = 19132  # Default Bedrock port
+                    server_config["server_settings"]["port"] = (
+                        19132  # Default Bedrock port
+                    )
                 else:
-                    server_config['server_settings']['port'] = 25565  # Default Java port
-            
+                    server_config["server_settings"]["port"] = (
+                        25565  # Default Java port
+                    )
+
             ConfigManager.save_server_config(server_name, server_config)
-            
-            self.logger.log('SUCCESS', f'Downloaded {server_type} {version} successfully')
+
+            self.logger.log(
+                "SUCCESS", f"Downloaded {server_type} {version} successfully"
+            )
             return True
-            
+
         except urllib.error.URLError as e:
             # Clean up partial download
             if jar_path and jar_path.exists():
                 jar_path.unlink()
-            raise DownloadError(f"Network error downloading {server_type} {version}: {e}") from e
+            raise DownloadError(
+                f"Network error downloading {server_type} {version}: {e}"
+            ) from e
         except Exception as e:
             # Clean up partial download
             if jar_path and jar_path.exists():
@@ -731,17 +884,19 @@ class ServerManager:
             if isinstance(e, (DownloadError, APIError)):
                 raise
             else:
-                raise DownloadError(f"Failed to download {server_type} {version}: {e}") from e
+                raise DownloadError(
+                    f"Failed to download {server_type} {version}: {e}"
+                ) from e
 
     def _validate_download_url(self, url: str) -> bool:
         """Ensure downloads only come from trusted HTTPS origins."""
         parsed = urlparse(url)
-        if parsed.scheme != 'https':
+        if parsed.scheme != "https":
             return False
 
-        domain = parsed.netloc.split(':', 1)[0].lower()
+        domain = parsed.netloc.split(":", 1)[0].lower()
         return any(
-            domain == trusted or domain.endswith(f'.{trusted}')
+            domain == trusted or domain.endswith(f".{trusted}")
             for trusted in TRUSTED_DOWNLOAD_DOMAINS
         )
 
@@ -749,30 +904,34 @@ class ServerManager:
         """Show server console by attaching to the screen session."""
         current_server = self.get_current_server()
         if not current_server:
-            self.logger.log('ERROR', 'No server selected')
+            self.logger.log("ERROR", "No server selected")
             return False
-        
+
         screen_name = get_screen_session_name(current_server)
-        
+
         if not is_screen_session_running(screen_name):
-            self.logger.log('ERROR', f'Server {current_server} is not running')
+            self.logger.log("ERROR", f"Server {current_server} is not running")
             return False
-        
+
         # Attach to the screen session
         try:
             # This will attach to the screen session and give control to the user
             # When they detach (Ctrl+A, D), control will return to our program
-            attach_cmd = ['screen', '-r', screen_name]
-            self.logger.log('INFO', f'Attaching to server console for {current_server}. Press Ctrl+A then D to detach.')
+            attach_cmd = ["screen", "-r", screen_name]
+            self.logger.log(
+                "INFO",
+                f"Attaching to server console for {current_server}. Press Ctrl+A then D to detach.",
+            )
             subprocess.run(attach_cmd)
             return True
         except Exception as e:
-            self.logger.log('ERROR', f'Failed to attach to server console: {e}')
+            self.logger.log("ERROR", f"Failed to attach to server console: {e}")
             return False
 
     def show_performance_dashboard(self):
         """Display live performance metrics for the current server."""
         from core.dashboard import show_performance_dashboard as show_dashboard
+
         return show_dashboard(self, self.monitor, self.ui, self.logger)
 
     def show_statistics(self):
@@ -791,7 +950,7 @@ class ServerManager:
 
             # Get server statistics from database
             stats = self.db.get_server_statistics(current_server)
-            
+
             def format_duration(seconds):
                 if not seconds:
                     return "N/A"
@@ -801,20 +960,38 @@ class ServerManager:
                 minutes, _ = divmod(rem, 60)
                 return f"{days}d {hours}h {minutes}m"
 
-            print(f"\n{UI.colors.BOLD}Statistics for: {current_server}{UI.colors.RESET}")
-            print(f"  - Total Sessions:    {UI.colors.CYAN}{stats.get('total_sessions', 'N/A')}{UI.colors.RESET}")
-            print(f"  - Total Uptime:      {UI.colors.CYAN}{format_duration(stats.get('total_uptime'))}{UI.colors.RESET}")
-            print(f"  - Average Session:   {UI.colors.CYAN}{format_duration(stats.get('avg_duration'))}{UI.colors.RESET}")
-            print(f"  - Total Crashes:     {UI.colors.YELLOW}{stats.get('total_crashes', 'N/A')}{UI.colors.RESET}")
-            print(f"  - Total Restarts:    {UI.colors.YELLOW}{stats.get('total_restarts', 'N/A')}{UI.colors.RESET}")
+            print(
+                f"\n{UI.colors.BOLD}Statistics for: {current_server}{UI.colors.RESET}"
+            )
+            print(
+                f"  - Total Sessions:    {UI.colors.CYAN}{stats.get('total_sessions', 'N/A')}{UI.colors.RESET}"
+            )
+            print(
+                f"  - Total Uptime:      {UI.colors.CYAN}{format_duration(stats.get('total_uptime'))}{UI.colors.RESET}"
+            )
+            print(
+                f"  - Average Session:   {UI.colors.CYAN}{format_duration(stats.get('avg_duration'))}{UI.colors.RESET}"
+            )
+            print(
+                f"  - Total Crashes:     {UI.colors.YELLOW}{stats.get('total_crashes', 'N/A')}{UI.colors.RESET}"
+            )
+            print(
+                f"  - Total Restarts:    {UI.colors.YELLOW}{stats.get('total_restarts', 'N/A')}{UI.colors.RESET}"
+            )
             print("\n  --- 24-Hour Performance ---")
-            print(f"  - Avg RAM Usage:     {UI.colors.CYAN}{stats.get('avg_ram_usage_24h', 0):.2f}%{UI.colors.RESET}")
-            print(f"  - Avg CPU Usage:     {UI.colors.CYAN}{stats.get('avg_cpu_usage_24h', 0):.2f}%{UI.colors.RESET}")
-            print(f"  - Peak Players:      {UI.colors.CYAN}{stats.get('peak_players_24h', 'N/A')}{UI.colors.RESET}")
-            
+            print(
+                f"  - Avg RAM Usage:     {UI.colors.CYAN}{stats.get('avg_ram_usage_24h', 0):.2f}%{UI.colors.RESET}"
+            )
+            print(
+                f"  - Avg CPU Usage:     {UI.colors.CYAN}{stats.get('avg_cpu_usage_24h', 0):.2f}%{UI.colors.RESET}"
+            )
+            print(
+                f"  - Peak Players:      {UI.colors.CYAN}{stats.get('peak_players_24h', 'N/A')}{UI.colors.RESET}"
+            )
+
         except Exception as e:
             if self.logger:
-                self.logger.log('ERROR', f'Failed to show statistics: {e}')
+                self.logger.log("ERROR", f"Failed to show statistics: {e}")
             print(f"{UI.colors.RED}Failed to load statistics: {e}{UI.colors.RESET}")
         finally:
             input("\nPress Enter to continue...")
@@ -833,18 +1010,32 @@ class ServerManager:
             settings = server_config.get("server_settings", {})
 
             while True:
-                print(f"\n{UI.colors.BOLD}Configure Server: {current_server}{UI.colors.RESET}")
-                print(f" 1. RAM Allocation: {UI.colors.CYAN}{server_config.get('ram_mb', 1024)} MB{UI.colors.RESET}")
-                print(f" 2. Port: {UI.colors.CYAN}{settings.get('port', 25565)}{UI.colors.RESET}")
-                print(f" 3. Auto Restart: {UI.colors.CYAN}{'Yes' if server_config.get('auto_restart') else 'No'}{UI.colors.RESET}")
-                print(f" 4. MOTD: {UI.colors.CYAN}{settings.get('motd', 'A Minecraft Server')}{UI.colors.RESET}")
-                print(f" 5. Max Players: {UI.colors.CYAN}{settings.get('max-players', 20)}{UI.colors.RESET}")
+                print(
+                    f"\n{UI.colors.BOLD}Configure Server: {current_server}{UI.colors.RESET}"
+                )
+                print(
+                    f" 1. RAM Allocation: {UI.colors.CYAN}{server_config.get('ram_mb', 1024)} MB{UI.colors.RESET}"
+                )
+                print(
+                    f" 2. Port: {UI.colors.CYAN}{settings.get('port', 25565)}{UI.colors.RESET}"
+                )
+                print(
+                    f" 3. Auto Restart: {UI.colors.CYAN}{'Yes' if server_config.get('auto_restart') else 'No'}{UI.colors.RESET}"
+                )
+                print(
+                    f" 4. MOTD: {UI.colors.CYAN}{settings.get('motd', 'A Minecraft Server')}{UI.colors.RESET}"
+                )
+                print(
+                    f" 5. Max Players: {UI.colors.CYAN}{settings.get('max-players', 20)}{UI.colors.RESET}"
+                )
                 print(f" 0. Back to Main Menu")
-                
-                choice = input(f"\n{UI.colors.YELLOW}Select option to change: {UI.colors.RESET}").strip()
-                
+
+                choice = input(
+                    f"\n{UI.colors.YELLOW}Select option to change: {UI.colors.RESET}"
+                ).strip()
+
                 try:
-                    if choice == '1':
+                    if choice == "1":
                         new_ram = input("Enter new RAM allocation (MB): ").strip()
                         if new_ram.isdigit():
                             ram_mb = int(new_ram)
@@ -857,20 +1048,34 @@ class ServerManager:
                                     continue
 
                                 if message:  # Warning message
-                                    print(f"{UI.colors.YELLOW}{message}{UI.colors.RESET}")
-                                    confirm = input("Continue anyway? (yes/no): ").strip().lower()
-                                    if confirm not in ['yes', 'y']:
-                                        print(f"{UI.colors.CYAN}RAM change cancelled.{UI.colors.RESET}")
+                                    print(
+                                        f"{UI.colors.YELLOW}{message}{UI.colors.RESET}"
+                                    )
+                                    confirm = (
+                                        input("Continue anyway? (yes/no): ")
+                                        .strip()
+                                        .lower()
+                                    )
+                                    if confirm not in ["yes", "y"]:
+                                        print(
+                                            f"{UI.colors.CYAN}RAM change cancelled.{UI.colors.RESET}"
+                                        )
                                         continue
 
-                                server_config['ram_mb'] = ram_mb
-                                print(f"{UI.colors.GREEN}RAM allocation updated to {ram_mb} MB{UI.colors.RESET}")
+                                server_config["ram_mb"] = ram_mb
+                                print(
+                                    f"{UI.colors.GREEN}RAM allocation updated to {ram_mb} MB{UI.colors.RESET}"
+                                )
 
                             except ValueError as e:
-                                print(f"{UI.colors.RED}Invalid RAM value: {e}{UI.colors.RESET}")
+                                print(
+                                    f"{UI.colors.RED}Invalid RAM value: {e}{UI.colors.RESET}"
+                                )
                         else:
-                            print(f"{UI.colors.RED}Invalid input. Please enter a number.{UI.colors.RESET}")
-                    elif choice == '2':
+                            print(
+                                f"{UI.colors.RED}Invalid input. Please enter a number.{UI.colors.RESET}"
+                            )
+                    elif choice == "2":
                         new_port = input("Enter new port: ").strip()
                         if new_port.isdigit():
                             port = int(new_port)
@@ -880,62 +1085,94 @@ class ServerManager:
 
                                 # Check if port is already in use
                                 if is_port_in_use(port):
-                                    print(f"{UI.colors.YELLOW}Warning: Port {port} appears to be in use.{UI.colors.RESET}")
-                                    confirm = input(f"Continue anyway? (yes/no): ").strip().lower()
-                                    if confirm not in ['yes', 'y']:
-                                        print(f"{UI.colors.CYAN}Port change cancelled.{UI.colors.RESET}")
+                                    print(
+                                        f"{UI.colors.YELLOW}Warning: Port {port} appears to be in use.{UI.colors.RESET}"
+                                    )
+                                    confirm = (
+                                        input(f"Continue anyway? (yes/no): ")
+                                        .strip()
+                                        .lower()
+                                    )
+                                    if confirm not in ["yes", "y"]:
+                                        print(
+                                            f"{UI.colors.CYAN}Port change cancelled.{UI.colors.RESET}"
+                                        )
                                         continue
 
-                                settings['port'] = port
-                                print(f"{UI.colors.GREEN}Port updated to {port}{UI.colors.RESET}")
+                                settings["port"] = port
+                                print(
+                                    f"{UI.colors.GREEN}Port updated to {port}{UI.colors.RESET}"
+                                )
 
                             except ValueError as e:
-                                print(f"{UI.colors.RED}Invalid port: {e}{UI.colors.RESET}")
+                                print(
+                                    f"{UI.colors.RED}Invalid port: {e}{UI.colors.RESET}"
+                                )
                         else:
-                            print(f"{UI.colors.RED}Invalid input. Please enter a number.{UI.colors.RESET}")
-                    elif choice == '3':
-                        server_config['auto_restart'] = not server_config.get('auto_restart', False)
-                        status = "enabled" if server_config['auto_restart'] else "disabled"
-                        print(f"{UI.colors.GREEN}Auto restart {status}{UI.colors.RESET}")
-                    elif choice == '4':
+                            print(
+                                f"{UI.colors.RED}Invalid input. Please enter a number.{UI.colors.RESET}"
+                            )
+                    elif choice == "3":
+                        server_config["auto_restart"] = not server_config.get(
+                            "auto_restart", False
+                        )
+                        status = (
+                            "enabled" if server_config["auto_restart"] else "disabled"
+                        )
+                        print(
+                            f"{UI.colors.GREEN}Auto restart {status}{UI.colors.RESET}"
+                        )
+                    elif choice == "4":
                         new_motd = input("Enter new MOTD: ").strip()
                         if new_motd:
-                            settings['motd'] = new_motd
+                            settings["motd"] = new_motd
                             print(f"{UI.colors.GREEN}MOTD updated{UI.colors.RESET}")
                         else:
-                            print(f"{UI.colors.RED}MOTD cannot be empty{UI.colors.RESET}")
-                    elif choice == '5':
+                            print(
+                                f"{UI.colors.RED}MOTD cannot be empty{UI.colors.RESET}"
+                            )
+                    elif choice == "5":
                         new_max_players = input("Enter max players: ").strip()
                         if new_max_players.isdigit():
                             try:
                                 max_players = int(new_max_players)
                                 validate_max_players(max_players)
-                                settings['max-players'] = max_players
-                                print(f"{UI.colors.GREEN}Max players updated to {max_players}{UI.colors.RESET}")
+                                settings["max-players"] = max_players
+                                print(
+                                    f"{UI.colors.GREEN}Max players updated to {max_players}{UI.colors.RESET}"
+                                )
                             except ValueError as e:
-                                print(f"{UI.colors.RED}Invalid max players: {e}{UI.colors.RESET}")
+                                print(
+                                    f"{UI.colors.RED}Invalid max players: {e}{UI.colors.RESET}"
+                                )
                         else:
-                            print(f"{UI.colors.RED}Invalid input. Please enter a number.{UI.colors.RESET}")
-                    elif choice == '0':
+                            print(
+                                f"{UI.colors.RED}Invalid input. Please enter a number.{UI.colors.RESET}"
+                            )
+                    elif choice == "0":
                         break
                     else:
                         print(f"{UI.colors.RED}Invalid choice.{UI.colors.RESET}")
                         continue
-                    
+
                     # Update the configuration
-                    server_config['server_settings'] = settings
-                    config['servers'][current_server] = server_config
+                    server_config["server_settings"] = settings
+                    config["servers"][current_server] = server_config
                     ConfigManager.save(config)
-                    
+
                 except ValueError:
-                    print(f"{UI.colors.RED}Invalid input, please enter a number where required.{UI.colors.RESET}")
+                    print(
+                        f"{UI.colors.RED}Invalid input, please enter a number where required.{UI.colors.RESET}"
+                    )
                 except Exception as e:
                     if self.logger:
-                        self.logger.log('ERROR', f'Error updating configuration: {e}')
-                    print(f"{UI.colors.RED}Error updating configuration: {e}{UI.colors.RESET}")
-                    
+                        self.logger.log("ERROR", f"Error updating configuration: {e}")
+                    print(
+                        f"{UI.colors.RED}Error updating configuration: {e}{UI.colors.RESET}"
+                    )
+
         except Exception as e:
             if self.logger:
-                self.logger.log('ERROR', f'Failed to configure server: {e}')
+                self.logger.log("ERROR", f"Failed to configure server: {e}")
             print(f"{UI.colors.RED}Failed to configure server: {e}{UI.colors.RESET}")
             input("\nPress Enter to continue...")
