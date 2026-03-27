@@ -40,7 +40,8 @@ class UI:
     @staticmethod
     def clear_screen():
         """Clear terminal screen."""
-        os.system('cls' if os.name == 'nt' else 'clear')
+        sys.stdout.write('\033[2J\033[H')
+        sys.stdout.flush()
     
     @staticmethod
     def print_header(version="2.0", system_info=None):

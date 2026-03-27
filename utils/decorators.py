@@ -5,8 +5,24 @@ Decorators - Common decorators for error handling, performance monitoring, and v
 import time
 import functools
 import logging
+import threading
 from typing import Any, Callable, Optional, Type, Union, Tuple
 from core.constants import ErrorMessages, NetworkConfig
+
+
+def _log_message(logger: Optional[Any], level: str, message: str) -> None:
+    """Support both stdlib loggers and MSM's EnhancedLogger."""
+    if not logger:
+        return
+
+    log_method = getattr(logger, level.lower(), None)
+    if callable(log_method):
+        log_method(message)
+        return
+
+    generic_log = getattr(logger, 'log', None)
+    if callable(generic_log):
+        generic_log(level.upper(), message)
 
 def handle_errors(
     logger: Optional[logging.Logger] = None,
@@ -31,10 +47,7 @@ def handle_errors(
             try:
                 return func(*args, **kwargs)
             except Exception as e:
-                if logger:
-                    getattr(logger, log_level.lower(), logger.error)(
-                        f'Error in {func.__name__}: {e}'
-                    )
+                _log_message(logger, log_level, f'Error in {func.__name__}: {e}')
                 if reraise:
                     raise
                 return default_return
@@ -60,6 +73,9 @@ def retry(
     Returns:
         Decorated function
     """
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1")
+
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(*args, **kwargs) -> Any:
@@ -72,20 +88,21 @@ def retry(
                 except exceptions as e:
                     last_exception = e
                     if attempt < max_attempts - 1:
-                        if logger:
-                            logger.warning(
-                                f'Attempt {attempt + 1} failed for {func.__name__}: {e}. '
-                                f'Retrying in {current_delay}s...'
-                            )
+                        _log_message(
+                            logger,
+                            'WARNING',
+                            f'Attempt {attempt + 1} failed for {func.__name__}: {e}. '
+                            f'Retrying in {current_delay}s...'
+                        )
                         time.sleep(current_delay)
                         current_delay *= backoff
                     else:
-                        if logger:
-                            logger.error(
-                                f'All {max_attempts} attempts failed for {func.__name__}: {e}'
-                            )
+                        _log_message(
+                            logger,
+                            'ERROR',
+                            f'All {max_attempts} attempts failed for {func.__name__}: {e}'
+                        )
                         raise last_exception
-            return wrapper
         return wrapper
     return decorator
 
@@ -110,10 +127,8 @@ def performance_monitor(
             end_time = time.time()
             execution_time = end_time - start_time
             
-            if logger and execution_time >= log_threshold:
-                logger.debug(
-                    f'{func.__name__} executed in {execution_time:.2f}s'
-                )
+            if execution_time >= log_threshold:
+                _log_message(logger, 'DEBUG', f'{func.__name__} executed in {execution_time:.2f}s')
             
             return result
         return wrapper
@@ -212,26 +227,28 @@ def timeout(
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(*args, **kwargs) -> Any:
-            import signal
-            
-            def timeout_handler(signum, frame):
-                raise TimeoutError(f'Function {func.__name__} timed out after {timeout_seconds}s')
-            
-            # Set up timeout
-            old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(int(timeout_seconds))
-            
-            try:
-                result = func(*args, **kwargs)
-                return result
-            except TimeoutError as e:
-                if logger:
-                    logger.error(f'Timeout in {func.__name__}: {e}')
-                raise
-            finally:
-                # Restore old handler
-                signal.alarm(0)
-                signal.signal(signal.SIGALRM, old_handler)
+            result = [None]
+            exception = [None]
+
+            def target() -> None:
+                try:
+                    result[0] = func(*args, **kwargs)
+                except Exception as exc:
+                    exception[0] = exc
+
+            worker = threading.Thread(target=target, daemon=True, name=f"timeout-{func.__name__}")
+            worker.start()
+            worker.join(timeout=timeout_seconds)
+
+            if worker.is_alive():
+                message = f'Function {func.__name__} timed out after {timeout_seconds}s'
+                _log_message(logger, 'ERROR', f'Timeout in {func.__name__}: {message}')
+                raise TimeoutError(message)
+
+            if exception[0] is not None:
+                raise exception[0]
+
+            return result[0]
         return wrapper
     return decorator
 
@@ -257,12 +274,12 @@ def log_function_call(
                 log_msg = f'Calling {func.__name__}'
                 if log_args:
                     log_msg += f' with args={args}, kwargs={kwargs}'
-                logger.debug(log_msg)
+                _log_message(logger, 'DEBUG', log_msg)
             
             result = func(*args, **kwargs)
             
-            if logger and log_result:
-                logger.debug(f'{func.__name__} returned: {result}')
+            if log_result:
+                _log_message(logger, 'DEBUG', f'{func.__name__} returned: {result}')
             
             return result
         return wrapper

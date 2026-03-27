@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import threading
 from typing import List, Dict, Optional, Callable
+from core.mixins import LogMixin
 
 # Assume logger is passed or imported
 # from core.logger import EnhancedLogger
@@ -19,7 +20,7 @@ from typing import List, Dict, Optional, Callable
 # from utils.helpers import get_server_directory
 
 
-class Scheduler:
+class Scheduler(LogMixin):
     """Manages scheduled tasks like backups and restarts."""
 
     # Singleton instance for signal handler access
@@ -48,18 +49,6 @@ class Scheduler:
 
         # Set singleton for signal handler access
         Scheduler._instance = self
-
-    def _log(self, level: str, message: str):
-        """Log a message using the logger or print to console.
-
-        Args:
-            level: Log level (INFO, ERROR, WARNING, etc.)
-            message: Message to log
-        """
-        if self.logger:
-            self.logger.log(level, message)
-        else:
-            print(f"[{level}] {message}")
 
     def register_shutdown_callback(self, callback: Callable) -> None:
         """Register a callback to be called during shutdown.

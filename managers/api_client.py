@@ -14,8 +14,9 @@ from typing import List, Dict, Optional, Any, Callable
 # Add import for custom exceptions
 from core.exceptions import APIError
 from core.constants import NetworkConfig
+from core.mixins import ClassLogMixin
 
-class BaseAPI:
+class BaseAPI(ClassLogMixin):
     """Base API client class with shared functionality."""
 
     # Class variable to hold the logger instance
@@ -36,19 +37,6 @@ class BaseAPI:
             logger: Logger instance to use for logging
         """
         cls.logger = logger
-
-    @classmethod
-    def _log(cls, message: str, level: str = "INFO"):
-        """Log a message using the injected logger or fallback to print.
-
-        Args:
-            message: Message to log
-            level: Log level (default: "INFO")
-        """
-        if cls.logger:
-            cls.logger.log(level, message)
-        else:
-            print(f"[{level}] {message}")
 
     @classmethod
     def _calculate_backoff(cls, attempt: int) -> float:

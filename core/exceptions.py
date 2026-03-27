@@ -11,7 +11,7 @@ class ConfigError(MSMError):
     """Errors related to configuration loading/saving."""
     pass
 
-class EnvironmentError(MSMError):
+class MSMEnvironmentError(MSMError):
     """Errors related to the execution environment (Debian, missing deps)."""
     pass
 

@@ -9,6 +9,8 @@ import subprocess
 import json
 import signal
 import os
+import logging
+import uuid
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -18,13 +20,21 @@ from managers.tunnel_manager import TunnelManager
 class TestEnhancedTunnelManager(unittest.TestCase):
     
     def setUp(self):
-        self.temp_dir = Path(tempfile.mkdtemp())
+        workspace_tmp = Path.cwd() / '.test_tmp'
+        workspace_tmp.mkdir(exist_ok=True)
+        self.temp_dir = workspace_tmp / f"test_tunnel_{uuid.uuid4().hex}"
+        self.temp_dir.mkdir()
         self.log_path = self.temp_dir / 'test.log'
-        
+
+        logging.getLogger('MSM').handlers = []
         self.logger = EnhancedLogger(str(self.log_path))
+        self.config_patcher = patch('managers.tunnel_manager.get_config_dir', return_value=self.temp_dir)
+        self.config_patcher.start()
         self.tunnel_mgr = TunnelManager(self.logger)
     
     def tearDown(self):
+        self.logger.close()
+        self.config_patcher.stop()
         shutil.rmtree(self.temp_dir, ignore_errors=True)
     
     def test_tunnel_status(self):
@@ -95,7 +105,9 @@ class TestEnhancedTunnelManager(unittest.TestCase):
         mock_popen.assert_called_once_with(
             ["ngrok", "tcp", "25565"],
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
+            stderr=subprocess.PIPE,
+            shell=False,
+            text=True
         )
         self.assertIn('ngrok', self.tunnel_mgr.tunnel_processes)
         self.assertEqual(self.tunnel_mgr.tunnel_processes['ngrok'], mock_process)
@@ -175,7 +187,9 @@ class TestEnhancedTunnelManager(unittest.TestCase):
             mock_popen.assert_called_once_with(
                 ["cloudflared", "tunnel", "--url", "tcp://localhost:25565"],
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
+                stderr=subprocess.PIPE,
+                text=True,
+                shell=False
             )
             self.assertIn('cloudflared', self.tunnel_mgr.tunnel_processes)
             self.assertEqual(self.tunnel_mgr.tunnel_processes['cloudflared'], mock_process)
@@ -190,8 +204,13 @@ class TestEnhancedTunnelManager(unittest.TestCase):
         with patch('shutil.which', return_value='/usr/bin/ssh'):
             result = self.tunnel_mgr.start_pinggy(25565)
             self.assertTrue(result)
-            # Check that ssh command was called (exact command may vary)
-            mock_popen.assert_called_once()
+            mock_popen.assert_called_once_with(
+                ["ssh", "-o", "StrictHostKeyChecking=no", "-R", "0:localhost:25565", "a.pinggy.io"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                shell=False
+            )
             self.assertIn('pinggy', self.tunnel_mgr.tunnel_processes)
 
 if __name__ == '__main__':

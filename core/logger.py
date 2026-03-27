@@ -8,6 +8,7 @@ import time
 import gzip
 import shutil
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
@@ -58,6 +59,9 @@ class CompressedRotatingFileHandler(RotatingFileHandler):
 class EnhancedLogger:
     """Enhanced logging system with rotation and structured logging"""
 
+    _cleanup_started = set()
+    _cleanup_lock = threading.Lock()
+
     def __init__(self, log_file: str, max_size: int = 50 * 1024 * 1024, backup_count: int = 5,
                  compress_backups: bool = True):
         """Initialize the EnhancedLogger.
@@ -85,12 +89,13 @@ class EnhancedLogger:
         self.logger = logging.getLogger('MSM')
         self.logger.setLevel(logging.DEBUG)
 
-        # Prevent duplicate handlers if logger already configured
-        if self.logger.handlers:
-            return
-
         # Prevent propagation to root logger
         self.logger.propagate = False
+
+        # Reconfigure the named logger for the current target file.
+        for handler in self.logger.handlers[:]:
+            handler.close()
+            self.logger.removeHandler(handler)
 
         # Create rotating file handler (with or without compression)
         if self.compress_backups:
@@ -119,8 +124,15 @@ class EnhancedLogger:
         # Add handler to logger
         self.logger.addHandler(file_handler)
 
-        # Clean up old log files (from previous rotation method)
-        self._cleanup_old_logs()
+        log_dir = os.path.dirname(self.log_file)
+        with self._cleanup_lock:
+            if log_dir and log_dir not in self._cleanup_started:
+                self._cleanup_started.add(log_dir)
+                threading.Thread(
+                    target=self._cleanup_old_logs,
+                    daemon=True,
+                    name="log-cleanup"
+                ).start()
 
     def _cleanup_old_logs(self):
         """Clean up old log files from previous rotation method."""
@@ -172,3 +184,10 @@ class EnhancedLogger:
         log_level = getattr(logging, level.upper(), logging.INFO)
         extra_data = f" | {kwargs}" if kwargs else ""
         self.logger.log(log_level, f"{message}{extra_data}")
+
+    def close(self) -> None:
+        """Close the underlying logger handlers."""
+        for handler in self.logger.handlers[:]:
+            handler.flush()
+            handler.close()
+            self.logger.removeHandler(handler)

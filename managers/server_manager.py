@@ -12,6 +12,7 @@ import urllib.error  # Add this import
 import subprocess
 import psutil  # Add missing psutil import
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import Optional, Dict, List, Tuple, Any, Union
 
 # Add imports for custom exceptions
@@ -26,9 +27,20 @@ from utils.helpers import (
     sanitize_input, get_java_path, is_screen_session_running,
     run_command, get_server_directory, get_screen_session_name,
     validate_port, is_port_in_use, validate_ram_allocation, validate_max_players,
-    validate_server_name, validate_minecraft_version
+    validate_server_name, validate_minecraft_version, invalidate_screen_session_cache
 )
 from ui.interface import UI
+
+TRUSTED_DOWNLOAD_DOMAINS = {
+    'api.papermc.io', 'papermc.io',
+    'api.purpurmc.org', 'purpurmc.org',
+    'meta.fabricmc.net', 'maven.fabricmc.net',
+    'meta.quiltmc.org',
+    'piston-meta.mojang.com', 'piston-data.mojang.com',
+    'github.com', 'api.github.com',
+    'objects.githubusercontent.com', 'release-assets.githubusercontent.com',
+    'githubusercontent.com'
+}
 
 class ServerManager:
     """Unified server management combining both branch features"""
@@ -264,10 +276,11 @@ class ServerManager:
                 return False
             phar_file = phar_files[0]
             # Check if PHP is available
-            if not shutil.which('php'):
+            php_path = shutil.which('php')
+            if not php_path:
                  self.logger.log('ERROR', 'PHP not found. Install with: pkg install php')
                  return False
-            startup_command = ['php', str(phar_file)] 
+            startup_command = [php_path, str(phar_file)]
             # Note: PocketMine doesn't use RAM args like Java
             # Ensure eula.txt is NOT created for PocketMine
             eula_file = server_dir / 'eula.txt'
@@ -325,6 +338,7 @@ class ServerManager:
             # Pass cwd=str(server_dir) to run command inside the server directory
             returncode, stdout, stderr = run_command(screen_cmd, cwd=str(server_dir))
             if returncode == 0:
+                invalidate_screen_session_cache(screen_name)
                 # Give server time to initialize
                 time.sleep(5)
 
@@ -489,8 +503,10 @@ class ServerManager:
             returncode, stdout, stderr = run_command(stop_cmd)
             
             if returncode == 0:
+                invalidate_screen_session_cache(screen_name)
                 # Wait for graceful shutdown
                 for _ in range(15):
+                    invalidate_screen_session_cache(screen_name)
                     if not is_screen_session_running(screen_name):
                         break
                     time.sleep(1)
@@ -499,6 +515,7 @@ class ServerManager:
                     self.logger.log('WARNING', 'Server did not stop gracefully, forcing quit')
                     force_cmd = ['screen', '-S', screen_name, '-X', 'quit']
                     run_command(force_cmd)
+                    invalidate_screen_session_cache(screen_name)
                 
                 # Stop monitoring
                 try:
@@ -635,26 +652,28 @@ class ServerManager:
             target_filename = "server.jar" # Default for Java
 
             if hasattr(api_class, 'get_latest_build'):
-                # Paper-like and PocketMine APIs
+                # Paper-like APIs
                 build_info = api_class.get_latest_build(version)
                 if build_info:
                     if hasattr(api_class, 'get_download_url'):
-                        if server_type == "PocketMine-MP":
-                            download_url = api_class.get_download_url(version)
-                            target_filename = "PocketMine-MP.phar"
-                        else:
-                            build_number = build_info.get('build')
-                            if build_number:
-                                download_url = api_class.get_download_url(version, build_number)
+                        build_number = build_info.get('build')
+                        if build_number:
+                            download_url = api_class.get_download_url(version, build_number)
                 else:
                     raise DownloadError(f"Failed to get build info for {server_type} {version}")
             elif hasattr(api_class, 'get_download_url'):
-                # Vanilla API
+                # Vanilla, Fabric/Quilt-style, and PocketMine APIs
                 download_url = api_class.get_download_url(version)
-                target_filename = "server.jar"
+                if flavor_key == 'pocketmine':
+                    url_name = Path(urlparse(download_url).path).name if download_url else ""
+                    target_filename = url_name if url_name.endswith('.phar') else "PocketMine-MP.phar"
+                else:
+                    target_filename = "server.jar"
 
             if not download_url:
                 raise DownloadError(f"Could not generate download URL for {server_type} {version}")
+            if not self._validate_download_url(download_url):
+                raise DownloadError(f"Untrusted download domain: {download_url}")
 
             # Download the file
             jar_path = server_dir / target_filename
@@ -668,6 +687,9 @@ class ServerManager:
             )
             
             with urllib.request.urlopen(req, timeout=300) as response:  # 5 minute timeout
+                final_url = response.geturl()
+                if not self._validate_download_url(final_url):
+                    raise DownloadError(f"Untrusted download domain: {final_url}")
                 with open(jar_path, 'wb') as f:
                     shutil.copyfileobj(response, f)
             
@@ -711,6 +733,18 @@ class ServerManager:
             else:
                 raise DownloadError(f"Failed to download {server_type} {version}: {e}") from e
 
+    def _validate_download_url(self, url: str) -> bool:
+        """Ensure downloads only come from trusted HTTPS origins."""
+        parsed = urlparse(url)
+        if parsed.scheme != 'https':
+            return False
+
+        domain = parsed.netloc.split(':', 1)[0].lower()
+        return any(
+            domain == trusted or domain.endswith(f'.{trusted}')
+            for trusted in TRUSTED_DOWNLOAD_DOMAINS
+        )
+
     def show_console(self):
         """Show server console by attaching to the screen session."""
         current_server = self.get_current_server()
@@ -738,157 +772,8 @@ class ServerManager:
 
     def show_performance_dashboard(self):
         """Display live performance metrics for the current server."""
-        current_server = self.get_current_server()
-        if not current_server:
-            self.logger.log('ERROR', 'No server selected')
-            return False
-
-        screen_name = get_screen_session_name(current_server)
-
-        if not is_screen_session_running(screen_name):
-            self.logger.log('WARNING', f"Server '{current_server}' is not running.")
-            return False
-
-        self.logger.log('INFO', f"Starting performance dashboard for {current_server}")
-        print(f"Starting Performance Dashboard for '{current_server}'... Press Ctrl+C to exit.")
-        time.sleep(2)
-
-        try:
-            pid = 0
-            server_process = None
-
-            # Find the screen process PID more reliably
-            try:
-                result = run_command(['screen', '-ls'], capture_output=True)
-                if result[0] == 0:
-                    match = re.search(rf'(\d+)\.{screen_name}\s', result[1])
-                    if match:
-                        pid = int(match.group(1))
-                        # Find the actual Java/PHP child process if possible (more accurate)
-                        parent = psutil.Process(pid)
-                        children = parent.children(recursive=True)
-                        # Look for java or php process among children
-                        for child in children:
-                            if child.name().lower() in ['java', 'php']:
-                                server_process = child
-                                break
-                        if not server_process:  # Fallback to screen process if child not found
-                            server_process = parent
-                if not server_process:
-                    self.logger.log('WARNING', "Could not find server process PID. Displaying limited info.")
-
-            except Exception as e:
-                self.logger.log('WARNING', f'Could not reliably get PID for monitoring: {e}')
-                self.logger.log('WARNING', "Could not find server process PID. Displaying limited info.")
-
-            while True:
-                print(f"Performance Dashboard: {current_server} (Press Ctrl+C to exit)\n")
-
-                cpu_percent = "N/A"
-                mem_percent = "N/A"
-                
-                # Get actual process data if available
-                if server_process and server_process.is_running():
-                    try:
-                        with server_process.oneshot():
-                            cpu_percent = f"{server_process.cpu_percent():.1f}%"
-                            mem_info = server_process.memory_info()
-                            mem_percent = f"{mem_info.rss / (1024 * 1024):.1f} MB"
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        cpu_percent = "N/A"
-                        mem_percent = "N/A"
-                mem_rss_mb = "N/A"
-
-                # Get metrics if process found
-                if server_process:
-                    try:
-                        if server_process.is_running():
-                            with server_process.oneshot():
-                                cpu_percent = f"{server_process.cpu_percent():.1f}%"
-                                mem_info = server_process.memory_info()
-                                mem_rss_mb = f"{mem_info.rss / (1024 * 1024):.1f} MB"
-                                # psutil memory_percent can be misleading in containers/proot, RSS is often better
-                                # mem_percent = f"{server_process.memory_percent():.1f}%"
-                        else:
-                            self.logger.log('WARNING', "Server process stopped running.")
-                            break  # Exit dashboard loop
-                    except psutil.NoSuchProcess:
-                        self.logger.log('WARNING', "Server process disappeared.")
-                        break  # Exit dashboard loop
-                    except Exception as e:
-                        self.logger.log('ERROR', f"Error getting process stats: {e}")
-                        cpu_percent = "Error"
-                        mem_rss_mb = "Error"
-
-                print(f"  CPU Usage:  {cpu_percent}")
-                print(f"  RAM Usage:  {mem_rss_mb}")
-                # print(f"  RAM Percent: {mem_percent}")  # Optional
-
-                # --- Optional: Attempt to parse TPS and Players from log ---
-                # Note: This is less reliable than RCON or server plugins
-                tps_info = "N/A (Log parsing)"
-                player_count = "N/A (Log parsing)"
-                try:
-                    server_path = get_server_directory(current_server)
-                    log_file = server_path / "logs" / "latest.log"
-                    if log_file.exists():
-                        with open(log_file, "r", errors='ignore') as f:
-                            # Read last ~200 lines for recent info
-                            lines = f.readlines()[-200:]
-
-                        # Simple TPS parsing (adjust regex based on server type/plugins)
-                        tps_found = False
-                        for line in reversed(lines):
-                            # Example regex for Paper/Spigot TPS:
-                            tps_match = re.search(r'TPS from last 1m, 5m, 15m:\s*\*([\d\.]+),\s*([\d\.]+),\s*([\d\.]+)', line)
-                            if tps_match:
-                                tps_info = f"{float(tps_match.group(1)):.1f} (1m)"
-                                tps_found = True
-                                break
-                        if not tps_found:
-                            # Fallback for simpler messages if needed
-                            pass
-
-                        # Simple Player count parsing (very basic)
-                        players = set()
-                        for line in lines:
-                            join_match = re.search(r'\]:\s*(\w+)\[.*logged in', line)
-                            quit_match = re.search(r'\]:\s*(\w+)\s*left the game', line)
-                            disc_match = re.search(r'\]:\s*(\w+)\s*lost connection', line)
-                            if join_match:
-                                players.add(join_match.group(1))
-                            elif quit_match:
-                                players.discard(quit_match.group(1))
-                            elif disc_match:
-                                players.discard(disc_match.group(1))
-                        player_count = str(len(players))
-
-                except Exception as e:
-                    self.logger.log('DEBUG', f"Failed to parse log for TPS/Players: {e}")
-                    tps_info = "Error parsing log"
-                    player_count = "Error parsing log"
-
-                print(f"  TPS (est.): {tps_info}")
-                print(f"  Players:    {player_count}")
-                # --- End Optional Parsing ---
-
-                time.sleep(5)  # Refresh interval
-
-        except KeyboardInterrupt:
-            self.logger.log('INFO', "Performance dashboard stopped by user.")
-            print("\nExiting dashboard...")
-            # Stop monitoring if it was started
-            try:
-                if current_server:
-                    self.monitor.stop_monitoring(current_server)
-            except Exception as e:
-                self.logger.log('WARNING', f'Error stopping monitoring: {e}')
-            time.sleep(1)
-            return True
-        except Exception as e:
-            self.logger.log('ERROR', f"Error in performance dashboard: {e}")
-            print(f"Dashboard error: {e}")
-            return False
+        from core.dashboard import show_performance_dashboard as show_dashboard
+        return show_dashboard(self, self.monitor, self.ui, self.logger)
 
     def show_statistics(self):
         """Display server statistics from the database."""

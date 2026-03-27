@@ -18,8 +18,9 @@ from typing import Dict, Optional
 from environment import EnvironmentManager
 from utils.helpers import validate_port, get_config_dir
 from core.exceptions import TunnelError
+from core.mixins import LogMixin
 
-class TunnelManager:
+class TunnelManager(LogMixin):
     """Manages various tunneling services for exposing local servers to the internet."""
     
     def __init__(self, logger=None):
@@ -31,22 +32,10 @@ class TunnelManager:
         self.logger = logger
         self.tunnel_processes = {}  # Track tunnel processes
         self.tunnel_info = {}       # Store tunnel information
-        self.config_dir = Path(os.path.expanduser("~/.config/msm"))
+        self.config_dir = get_config_dir()
         self.tunnel_state_file = self.config_dir / "tunnel_state.json"
         self._load_tunnel_state()
         self.url_extraction_threads = {}  # Threads for URL extraction
-
-    def _log(self, level, msg):
-        """Log a message using the logger or print to console.
-        
-        Args:
-            level: Log level (INFO, ERROR, WARNING, etc.)
-            msg: Message to log
-        """
-        if self.logger: 
-            self.logger.log(level, msg)
-        else: 
-            print(f"[{level}] {msg}")
 
     def _save_tunnel_state(self):
         """Save tunnel state to file."""
@@ -93,7 +82,9 @@ class TunnelManager:
             time.sleep(2)
             url = "Not available"
             while proc.poll() is None:  # While process is running
-                output = proc.stdout.readline().decode('utf-8')
+                output = proc.stdout.readline()
+                if isinstance(output, bytes):
+                    output = output.decode('utf-8', errors='ignore')
                 if output:
                     # Look for URL pattern in ngrok output
                     url_match = re.search(r'https://[a-zA-Z0-9\-\.]+\.ngrok\.io', output)
@@ -117,7 +108,9 @@ class TunnelManager:
             time.sleep(2)
             url = "Not available"
             while proc.poll() is None:  # While process is running
-                output = proc.stdout.readline().decode('utf-8')
+                output = proc.stdout.readline()
+                if isinstance(output, bytes):
+                    output = output.decode('utf-8', errors='ignore')
                 if output:
                     # Look for URL pattern in cloudflared output
                     url_match = re.search(r'https://[a-zA-Z0-9\-\.]+\.trycloudflare\.com', output)
@@ -126,6 +119,26 @@ class TunnelManager:
                         self._update_tunnel_info(tunnel_name, {'url': url, 'started_at': time.time()})
                         self._log('INFO', f'{tunnel_name} URL: {url}')
                         break
+        except Exception as e:
+            self._log('DEBUG', f'Error extracting {tunnel_name} URL: {e}')
+
+    def _extract_pinggy_url(self, proc, tunnel_name):
+        """Extract URL from pinggy SSH output."""
+        try:
+            time.sleep(2)
+            while proc.poll() is None:
+                output = proc.stdout.readline()
+                if isinstance(output, bytes):
+                    output = output.decode('utf-8', errors='ignore')
+                if not output:
+                    continue
+
+                url_match = re.search(r'(https?://\S*pinggy\S*|tcp://\S*pinggy\S*)', output)
+                if url_match:
+                    url = url_match.group(1).rstrip(')')
+                    self._update_tunnel_info(tunnel_name, {'url': url, 'started_at': time.time()})
+                    self._log('INFO', f'{tunnel_name} URL: {url}')
+                    break
         except Exception as e:
             self._log('DEBUG', f'Error extracting {tunnel_name} URL: {e}')
 
@@ -322,10 +335,24 @@ class TunnelManager:
         # user must provide token, but we allow a free variant template
         cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-R", f"0:localhost:{port_int}", "a.pinggy.io"]
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                shell=False
+            )
             self.tunnel_processes['pinggy'] = proc
-            self._update_tunnel_info('pinggy', {'port': port_int, 'started_at': time.time(), 'url': 'Check SSH output for URL'})
+            self._update_tunnel_info('pinggy', {'port': port_int, 'started_at': time.time(), 'url': 'Extracting...'})
             self._save_tunnel_state()
+            url_thread = threading.Thread(
+                target=self._extract_pinggy_url,
+                args=(proc, 'pinggy'),
+                daemon=True,
+                name=f"pinggy-extract-{port_int}"
+            )
+            self.url_extraction_threads['pinggy'] = url_thread
+            url_thread.start()
             self._log('SUCCESS', f'pinggy started for tcp {port_int}.')
             return True
         except FileNotFoundError:
@@ -374,7 +401,13 @@ class TunnelManager:
 
         cmd = ["cloudflared", "tunnel", "--url", f"tcp://localhost:{port_int}"]
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                shell=False
+            )
             self.tunnel_processes['cloudflared'] = proc
             self._update_tunnel_info('cloudflared', {'port': port_int, 'started_at': time.time(), 'url': 'Extracting...'})
             self._save_tunnel_state()

@@ -5,6 +5,7 @@ SQLite-based statistics, session tracking, and metrics
 """
 import sqlite3
 import os
+import threading
 from datetime import datetime
 from contextlib import contextmanager
 from typing import Dict, Any, List, Tuple, Optional
@@ -72,7 +73,27 @@ class DatabaseManager:
             db_path: Path to the SQLite database file
         """
         self.db_path = db_path
+        self._connections: Dict[int, sqlite3.Connection] = {}
+        self._connection_lock = threading.Lock()
         self._init_database()
+
+    def _get_connection_for_thread(self) -> sqlite3.Connection:
+        """Get or create a persistent SQLite connection for the current thread."""
+        thread_id = threading.get_ident()
+
+        with self._connection_lock:
+            conn = self._connections.get(thread_id)
+            if conn is None:
+                conn = sqlite3.connect(
+                    self.db_path,
+                    timeout=30.0,
+                    check_same_thread=False
+                )
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA journal_mode=WAL")
+                self._connections[thread_id] = conn
+
+        return conn
 
     def _get_current_version(self, conn: sqlite3.Connection) -> int:
         """Get the current schema version from database.
@@ -171,11 +192,11 @@ class DatabaseManager:
         """
         conn = None
         try:
-            # Add 30-second timeout to prevent indefinite hangs
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
-            conn.row_factory = sqlite3.Row
+            conn = self._get_connection_for_thread()
             yield conn
         except sqlite3.OperationalError as e:
+            if conn:
+                conn.rollback()
             error_msg = str(e).lower()
             if "database is locked" in error_msg:
                 raise DatabaseError(
@@ -199,14 +220,28 @@ class DatabaseManager:
                     )
             else:
                 raise DatabaseError(f"Database operation failed: {e}")
+        except sqlite3.Error as e:
+            if conn:
+                conn.rollback()
+            raise DatabaseError(f"Database operation failed: {e}")
         except Exception as e:
             raise DatabaseError(f"Unexpected database error: {e}")
-        finally:
-            if conn:
+
+    def close(self) -> None:
+        """Close all persistent database connections."""
+        with self._connection_lock:
+            for conn in self._connections.values():
                 try:
                     conn.close()
                 except Exception:
-                    pass  # Ignore errors on close
+                    pass
+            self._connections.clear()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def log_session_start(self, server_name: str, flavor: str, version: str) -> int:
         """Log server session start.

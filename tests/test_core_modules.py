@@ -7,6 +7,7 @@ import tempfile
 import shutil
 import os
 import time
+import uuid
 from pathlib import Path
 from datetime import datetime
 
@@ -24,11 +25,15 @@ class TestDatabaseManager(unittest.TestCase):
     """Tests for DatabaseManager class"""
 
     def setUp(self):
-        self.temp_dir = Path(tempfile.mkdtemp())
+        workspace_tmp = Path.cwd() / '.test_tmp'
+        workspace_tmp.mkdir(exist_ok=True)
+        self.temp_dir = workspace_tmp / f"test_db_{uuid.uuid4().hex}"
+        self.temp_dir.mkdir()
         self.db_path = str(self.temp_dir / 'test.db')
         self.db = DatabaseManager(self.db_path)
 
     def tearDown(self):
+        self.db.close()
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_database_creation(self):
@@ -89,7 +94,10 @@ class TestEnhancedLogger(unittest.TestCase):
     """Tests for EnhancedLogger class"""
 
     def setUp(self):
-        self.temp_dir = Path(tempfile.mkdtemp())
+        workspace_tmp = Path.cwd() / '.test_tmp'
+        workspace_tmp.mkdir(exist_ok=True)
+        self.temp_dir = workspace_tmp / f"test_log_{uuid.uuid4().hex}"
+        self.temp_dir.mkdir()
         self.log_path = str(self.temp_dir / 'test.log')
         # Clear any existing MSM logger handlers
         import logging
@@ -156,7 +164,10 @@ class TestPerformanceMonitor(unittest.TestCase):
     """Tests for PerformanceMonitor class"""
 
     def setUp(self):
-        self.temp_dir = Path(tempfile.mkdtemp())
+        workspace_tmp = Path.cwd() / '.test_tmp'
+        workspace_tmp.mkdir(exist_ok=True)
+        self.temp_dir = workspace_tmp / f"test_monitor_{uuid.uuid4().hex}"
+        self.temp_dir.mkdir()
         self.db_path = str(self.temp_dir / 'test.db')
         self.log_path = str(self.temp_dir / 'test.log')
 
@@ -165,6 +176,8 @@ class TestPerformanceMonitor(unittest.TestCase):
         self.monitor = PerformanceMonitor(self.db, self.logger)
 
     def tearDown(self):
+        self.db.close()
+        self.logger.close()
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_system_info(self):

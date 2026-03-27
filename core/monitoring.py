@@ -8,7 +8,10 @@ import threading
 import time
 from typing import Optional, Dict, Any
 
-class PerformanceMonitor:
+from core.mixins import LogMixin
+
+
+class PerformanceMonitor(LogMixin):
     """Real-time performance monitoring system"""
     
     def __init__(self, db_manager=None, logger=None):
@@ -23,18 +26,6 @@ class PerformanceMonitor:
         self.monitor_threads = {}
         self.stop_events = {}
         self._lock = threading.Lock()  # Thread safety lock
-
-    def _log(self, level, message):
-        """Log a message using the logger or print to console.
-        
-        Args:
-            level: Log level (INFO, ERROR, WARNING, etc.)
-            message: Message to log
-        """
-        if self.logger:
-            self.logger.log(level, message)
-        else:
-            print(f"[{level}] {message}")
 
     def start_monitoring(self, server_name: str, pid: int) -> bool:
         """Start monitoring a server process.
@@ -76,20 +67,23 @@ class PerformanceMonitor:
             True if monitoring stopped successfully, False otherwise
         """
         with self._lock:
-            if server_name not in self.stop_events:
+            stop_event = self.stop_events.get(server_name)
+            thread = self.monitor_threads.get(server_name)
+            if not stop_event:
                 return False
+            stop_event.set()
 
-            self.stop_events[server_name].set()
-            if server_name in self.monitor_threads:
-                thread = self.monitor_threads[server_name]
-                thread.join(timeout=5)
-                if thread.is_alive():
-                    self._log('WARNING', f'Monitor thread for {server_name} did not stop gracefully')
-                del self.monitor_threads[server_name]
-            del self.stop_events[server_name]
-            
-            self._log('INFO', f'Stopped monitoring {server_name}')
-            return True
+        if thread:
+            thread.join(timeout=5)
+            if thread.is_alive():
+                self._log('WARNING', f'Monitor thread for {server_name} did not stop gracefully')
+
+        with self._lock:
+            self.monitor_threads.pop(server_name, None)
+            self.stop_events.pop(server_name, None)
+
+        self._log('INFO', f'Stopped monitoring {server_name}')
+        return True
 
     def _monitor_thread(self, server_name: str, pid: int, stop_event: threading.Event):
         """Monitoring thread for a server process.

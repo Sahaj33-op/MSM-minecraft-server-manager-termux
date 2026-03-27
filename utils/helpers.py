@@ -18,6 +18,9 @@ from core.constants import (
 )
 from utils.termux_utils import is_termux_environment
 
+_screen_cache = {}
+_SCREEN_CACHE_TTL = 3.0
+
 def sanitize_input(value: str, max_length: int = SecurityConfig.MAX_INPUT_LENGTH) -> str:
     """Enhanced input sanitization with length limits and path traversal protection.
     
@@ -336,6 +339,11 @@ def is_screen_session_running(session_name: str) -> bool:
     Returns:
         True if session is running, False otherwise
     """
+    now = time.monotonic()
+    cached = _screen_cache.get(session_name)
+    if cached and (now - cached[1]) < _SCREEN_CACHE_TTL:
+        return cached[0]
+
     try:
         result = subprocess.run(
             ["screen", "-ls", session_name],
@@ -343,9 +351,20 @@ def is_screen_session_running(session_name: str) -> bool:
             text=True,
             check=False
         )
-        return session_name in result.stdout
+        is_running = session_name in result.stdout
     except Exception:
-        return False
+        is_running = False
+
+    _screen_cache[session_name] = (is_running, now)
+    return is_running
+
+
+def invalidate_screen_session_cache(session_name: Optional[str] = None) -> None:
+    """Invalidate cached screen session state."""
+    if session_name is None:
+        _screen_cache.clear()
+    else:
+        _screen_cache.pop(session_name, None)
 
 def run_command(command, cwd=None, timeout=None, capture_output=False) -> Tuple[int, str, str]:
     """Run command with comprehensive error handling and security measures.
@@ -369,18 +388,16 @@ def run_command(command, cwd=None, timeout=None, capture_output=False) -> Tuple[
         if not command:
             return -1, "", "Empty command provided"
         
-        # Security: Block dangerous commands that could harm the system
-        if command[0].lower() in SecurityConfig.DANGEROUS_COMMANDS:
+        program = str(command[0]).lower()
+        if program in SecurityConfig.DANGEROUS_COMMANDS:
             return -1, "", f"Command '{command[0]}' is not allowed for security reasons"
-        
-        # Security: Validate first argument is not a shell metacharacter
-        if command[0] in SecurityConfig.SHELL_METACHARS:
-            return -1, "", f"Invalid command: {command[0]}"
-        
-        # Security: Block commands that try to access sensitive paths
+
         for arg in command:
-            if any(sensitive_path in arg for sensitive_path in SecurityConfig.SENSITIVE_PATHS):
-                return -1, "", f"Access to sensitive path not allowed: {arg}"
+            arg_str = str(arg)
+            if any(meta in arg_str for meta in SecurityConfig.SHELL_METACHARS):
+                return -1, "", f"Shell metacharacters are not allowed in command arguments: {arg_str}"
+            if any(sensitive_path in arg_str for sensitive_path in SecurityConfig.SENSITIVE_PATHS):
+                return -1, "", f"Access to sensitive path not allowed: {arg_str}"
         
         # Security: Use subprocess.run with shell=False to prevent injection
         result = subprocess.run(

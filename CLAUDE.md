@@ -108,12 +108,12 @@ scheduler = Scheduler(config_dir, logger, server_mgr, world_mgr)
 ```
 
 ### Server Lifecycle
-Servers run in `screen` sessions named `msm_<servername>`. The ServerManager tracks PIDs and monitors processes via psutil. Java servers use G1GC tuning flags; PocketMine uses PHP.
+Servers run in `screen` sessions named `msm-<servername>`. The ServerManager tracks PIDs and monitors processes via psutil. Java servers use G1GC tuning flags; PocketMine uses PHP.
 
 Server start flow:
 1. Check EULA acceptance (Java servers only) - prompts user and stores in config
 2. Write `eula.txt` and update `server.properties`
-3. Launch in screen session: `screen -dmS msm_<name> java -jar server.jar nogui`
+3. Launch in screen session: `screen -dmS msm-<name> java -jar server.jar nogui`
 4. Verify process is running via psutil
 5. Start performance monitoring thread
 

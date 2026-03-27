@@ -12,12 +12,13 @@ from typing import List, Tuple, Optional
 
 # Import custom exceptions
 from core.exceptions import PluginError, DownloadError
+from core.mixins import LogMixin
 # Assume logger and UI are passed or imported
 # from core.logger import EnhancedLogger
 # from ui.interface import UI
 from utils.helpers import get_server_directory # Import helper
 
-class PluginManager:
+class PluginManager(LogMixin):
     """Manages plugins for Bukkit/Spigot/Paper servers."""
     
     def __init__(self, logger=None, ui=None):
@@ -29,18 +30,6 @@ class PluginManager:
         """
         self.logger = logger
         self.ui = ui
-
-    def _log(self, level: str, message: str):
-        """Log a message using the logger or print to console.
-        
-        Args:
-            level: Log level (INFO, ERROR, WARNING, etc.)
-            message: Message to log
-        """
-        if self.logger:
-            self.logger.log(level, message)
-        else:
-            print(f"[{level}] {message}")
 
     def _print_ui(self, method: str, message: str):
         """Print a message using the UI or print to console.

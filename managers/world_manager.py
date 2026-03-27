@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import List, Optional
 
 from core.exceptions import BackupError 
+from core.mixins import LogMixin
 
-class WorldManager:
+class WorldManager(LogMixin):
     """Manages world backups and restoration with verification and rotation."""
     
     def __init__(self, logger=None):
@@ -21,18 +22,6 @@ class WorldManager:
             logger: Logger instance for logging messages
         """
         self.logger = logger
-    
-    def _log(self, level: str, message: str):
-        """Log message if logger available.
-        
-        Args:
-            level: Log level (INFO, ERROR, WARNING, etc.)
-            message: Message to log
-        """
-        if self.logger:
-            self.logger.log(level, message)
-        else:
-            print(f"[{level}] {message}")
             
     def _get_backup_dir(self, server_path: Path) -> Path:
         """Gets the backup directory path.
