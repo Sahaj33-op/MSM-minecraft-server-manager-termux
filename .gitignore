@@ -2,6 +2,12 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
+pytest-cache-files-*/
+.venv/
+.coverage
+.test_tmp/
+tmp_*/
 
 # Distribution / packaging
 .Python

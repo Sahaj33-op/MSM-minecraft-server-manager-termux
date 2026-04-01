@@ -172,11 +172,9 @@ Enhanced Minecraft Server Manager (MSM) v2 is a **professional, enterprise-grade
 
 ### Software Dependencies (Auto-installed)
 - `python` (3.7+)
-- `wget` (for downloading servers)
-- `curl` (for API requests)
 - `screen` (for background server running)
-- `tar` (for backup compression)
 - `openjdk-17` or `openjdk-21` (for Java servers)
+- `php` (for PocketMine-MP)
 - Python packages: `requests`, `psutil`
 
 </details>
@@ -190,16 +188,21 @@ Enhanced Minecraft Server Manager (MSM) v2 is a **professional, enterprise-grade
 pkg update && pkg upgrade -y
 
 # 2. Install dependencies (Crucial for Android)
-pkg install python git wget screen openjdk-17 openjdk-21 python-psutil -y
+pkg install python git screen openjdk-17 openjdk-21 php -y
 
 # 3. Clone the repository
 git clone https://github.com/sahaj33-op/MSM-minecraft-server-manager-termux.git
 cd MSM-minecraft-server-manager-termux
 
-# 4. Install standard Python packages
-pip install requests
+# 4. Create an isolated virtual environment
+python -m venv .venv
+source .venv/bin/activate
 
-# 5. Make executable and run
+# 5. Install Python dependencies
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+
+# 6. Make executable and run
 chmod +x msm.py
 python3 msm.py
 ```
@@ -211,20 +214,22 @@ python3 msm.py
 2. **Install required packages**:
    ```bash
    pkg update && pkg upgrade -y
-   pkg install python wget curl screen tar openjdk-17 -y
+   pkg install python git screen openjdk-17 openjdk-21 php -y
    ```
 
 3. **Download MSM**:
    ```bash
-   wget https://raw.githubusercontent.com/sahaj33-op/MSM-minecraft-server-manager-termux/main/msm.py
-   chmod +x msm.py
-   pip install requests psutil
+   git clone https://github.com/sahaj33-op/MSM-minecraft-server-manager-termux.git
+   cd MSM-minecraft-server-manager-termux
    ```
 
-4. **Verify installation**:
+4. **Create a virtual environment and install dependencies**:
    ```bash
-   python3 -m py_compile msm.py  # Check for syntax errors
-   python3 msm.py --version       # Show version info
+   python -m venv .venv
+   source .venv/bin/activate
+   python -m pip install --upgrade pip
+   python -m pip install -r requirements.txt
+   python -m py_compile msm.py
    ```
 
 ### Method 3: One-Line Install
