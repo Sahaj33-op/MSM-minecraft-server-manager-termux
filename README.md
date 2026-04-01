@@ -15,11 +15,10 @@ This README is written against the current codebase in this repository. It does 
 - Supports manual backups and scheduled backups while MSM is running.
 - Lets you edit `server.properties` and `eula.txt` from inside the CLI.
 - Uses RCON for command delivery when enabled, and falls back to `screen -X stuff` otherwise.
-- Can start an `ngrok tcp` tunnel for a server if tunneling is enabled.
+- Can run `ngrok` or `playit` as a tunnel provider for a server.
 
 ## What MSM does not do
 
-- It does not implement `playit.gg`.
 - It does not keep backup scheduling or auto-restart alive after the MSM process exits.
 - It does not currently collect live player counts, TPS, or MSPT, even though the database schema has placeholders for them.
 - It is not a Windows-native hosting workflow. The actual runtime depends on `screen` and POSIX shell behavior.
@@ -54,6 +53,7 @@ This README is written against the current codebase in this repository. It does 
 ### Optional
 
 - `ngrok` for TCP tunnel management
+- `playit` or `playit-cli` for playit.gg agent management
 
 ## Installation
 
@@ -125,7 +125,7 @@ python msm.py
 1. Launch MSM with `python msm.py`.
 2. Create a server profile.
 3. Install a server flavor and version.
-4. Configure RAM, port, backups, ngrok, and optional RCON.
+4. Configure RAM, port, backups, tunnel provider, and optional RCON.
 5. Start the server.
 6. Use the world manager, console attach, command menu, and statistics view as needed.
 
@@ -160,7 +160,7 @@ Each running server owns:
 - its own monitoring thread
 - its own auto-restart thread
 - its own backup thread
-- its own optional ngrok process
+- its own optional tunnel process
 
 This means multiple servers can run concurrently without overwriting each other's session IDs or stop events.
 
@@ -174,6 +174,7 @@ Per-server files in the server directory:
 - `.msm.session`
 - `.msm.tunnel.pid`
 - `.msm.ngrok.log` when ngrok is enabled
+- `.msm.playit.log` when playit is enabled
 
 ### Monitoring and statistics
 
@@ -236,19 +237,43 @@ RCON support is intentionally small and only covers command execution.
 
 ### Tunnels
 
-Tunnel support is currently limited to `ngrok`.
+MSM currently supports two tunnel providers:
 
-When enabled for a server:
+- `ngrok`
+- `playit`
+
+For tunnel management:
+
+- MSM stores the tunnel PID in `.msm.tunnel.pid`
+- MSM shows localhost, LAN/Wi-Fi, and tunnel connection targets on the main screen
+- MSM exposes a tunnel setup wizard from the server configuration menu
+
+When `ngrok` is enabled:
 
 - MSM starts `ngrok tcp <server-port>`
-- stores the ngrok PID
-- writes ngrok output to `.msm.ngrok.log`
+- writes output to `.msm.ngrok.log`
 - queries the local ngrok API on `http://127.0.0.1:4040/api/tunnels` to discover the public URL
+- the setup wizard can store your authtoken with `ngrok config add-authtoken`
+
+When `playit` is enabled:
+
+- MSM starts the `playit` or `playit-cli` agent in the background
+- writes output to `.msm.playit.log`
+- tries to extract the public endpoint or claim URL from the agent log
+- expects you to link the agent to your playit account and create the tunnel mapping in the playit dashboard
+
+Suggested Termux install flow for playit:
+
+- `pkg update && pkg upgrade`
+- `pkg install tur-repo`
+- `pkg install playit`
+- `ln -s $PREFIX/bin/playit-cli $PREFIX/bin/playit`
+- `pkg install tmux`
+- run `tmux`, then `playit-cli`, and detach with `Ctrl+B` then `D` if you want to keep it open outside MSM
 
 Current limitation:
 
-- only `ngrok` is implemented
-- `tunnel.provider` values other than `ngrok` are ignored with a warning
+- playit tunnel creation is not automated through the playit API or website; MSM manages the local agent only
 
 ### Java detection
 
@@ -291,6 +316,7 @@ backups/
 .msm.session
 .msm.tunnel.pid
 .msm.ngrok.log
+.msm.playit.log
 ```
 
 ## Configuration format
@@ -403,7 +429,7 @@ GitHub Actions runs:
 
 - The runtime is designed for Termux/Linux. Development and tests can run elsewhere, but actual hosting depends on `screen`.
 - Exiting MSM while leaving servers active also stops the in-process monitor, auto-restart, and scheduled backup threads.
-- `ngrok` support is basic TCP tunnel management only.
+- tunnel management supports `ngrok` and `playit`, but dashboard-side tunnel creation is still manual for playit.
 - PocketMine-MP support covers binary download and process start, but the CLI is primarily optimized around Java server configuration fields.
 
 ## License

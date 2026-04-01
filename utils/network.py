@@ -403,7 +403,11 @@ def download_server_binary(
         session.close()
 
 
-def get_ngrok_public_url(port: int, logger=None) -> str | None:
+def get_ngrok_public_url(
+    port: int,
+    logger=None,
+    timeout: int | float = NGROK_TIMEOUT,
+) -> str | None:
     session = create_robust_session()
     try:
         response = safe_request(
@@ -411,7 +415,7 @@ def get_ngrok_public_url(port: int, logger=None) -> str | None:
             "GET",
             "http://127.0.0.1:4040/api/tunnels",
             logger=logger,
-            timeout=NGROK_TIMEOUT,
+            timeout=timeout,
         )
         if not response:
             return None

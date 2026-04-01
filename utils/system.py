@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -331,3 +333,32 @@ def format_bytes(size_bytes: int) -> str:
             return f"{size:.1f}{unit}"
         size /= 1024
     return f"{size_bytes}B"
+
+
+def get_local_ipv4_addresses() -> list[str]:
+    addresses: set[str] = set()
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe_socket:
+            probe_socket.connect(("8.8.8.8", 80))
+            address = probe_socket.getsockname()[0]
+            if address and not address.startswith("127."):
+                addresses.add(address)
+    except OSError:
+        pass
+
+    try:
+        for interface_addresses in psutil.net_if_addrs().values():
+            for address_info in interface_addresses:
+                if address_info.family != socket.AF_INET:
+                    continue
+                address = address_info.address
+                if address and not address.startswith("127."):
+                    addresses.add(address)
+    except Exception:
+        pass
+
+    def sort_key(address: str) -> tuple[int, str]:
+        parsed = ipaddress.ip_address(address)
+        return (0 if parsed.is_private else 1, address)
+
+    return sorted(addresses, key=sort_key)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -12,12 +13,14 @@ from core.config import ConfigManager
 from core.constants import (
     CONFIG_FILE,
     DATABASE_FILE,
+    DEFAULT_TUNNEL_BINARIES,
     EULA_FILE,
     LOG_FILE,
     LOG_RETENTION_DAYS,
     MAX_LOG_SIZE,
     SERVER_FLAVORS,
     SERVER_PROPERTIES_FILE,
+    SUPPORTED_TUNNEL_PROVIDERS,
     VERSION,
     VERSIONS_PER_PAGE,
 )
@@ -32,6 +35,8 @@ from utils.system import (
     format_bytes,
     get_server_dir,
     get_system_info,
+    run_command,
+    running_on_termux,
     sanitize_input,
 )
 
@@ -113,6 +118,259 @@ def print_header(current_server: str | None, runtime: RuntimeManager) -> None:
     if current_server:
         print(f"{C.DIM}Current server: {current_server}{C.RESET}")
     print(f"{C.BOLD}{C.CYAN}{'=' * 72}{C.RESET}\n")
+
+
+def print_connection_summary(instance) -> None:
+    info = instance.get_connection_info()
+    lan_endpoints = info["lan_endpoints"]
+    if lan_endpoints:
+        lan_display = ", ".join(lan_endpoints[:2])
+        if len(lan_endpoints) > 2:
+            lan_display += f" (+{len(lan_endpoints) - 2} more)"
+    else:
+        lan_display = "Not detected"
+
+    tunnel_display = info["tunnel_url"] or info["tunnel_status"]
+
+    print(f"{C.DIM}Localhost: {info['loopback_endpoint']}{C.RESET}")
+    print(f"{C.DIM}LAN/Wi-Fi: {lan_display}{C.RESET}")
+    print(f"{C.DIM}Tunnel: {tunnel_display}{C.RESET}")
+    if info.get("tunnel_setup_url"):
+        print(f"{C.DIM}Tunnel setup: {info['tunnel_setup_url']}{C.RESET}")
+
+
+def resolve_tunnel_binary(binary_path: str) -> str | None:
+    resolved = shutil.which(binary_path)
+    if resolved:
+        return resolved
+    file_path = Path(binary_path).expanduser()
+    if file_path.exists():
+        return str(file_path)
+    return None
+
+
+def save_tunnel_config(
+    instance,
+    config_manager: ConfigManager,
+    current_server: str,
+    provider: str,
+    binary_path: str,
+    enabled: bool,
+    logger,
+) -> None:
+    def updater(saved_config: dict) -> None:
+        tunnel = saved_config["servers"][current_server].setdefault("tunnel", {})
+        tunnel["provider"] = provider
+        tunnel["binary_path"] = binary_path
+        tunnel["enabled"] = enabled
+        tunnel["autostart"] = enabled
+
+    config_manager.mutate(updater)
+    if instance.is_running():
+        if enabled:
+            instance.restart_tunnel()
+        else:
+            instance.stop_tunnel()
+    logger.log(
+        "SUCCESS",
+        f"Tunnel settings saved for {current_server}.",
+        provider=provider,
+        enabled=enabled,
+    )
+
+
+def ngrok_setup_wizard(
+    runtime: RuntimeManager,
+    config_manager: ConfigManager,
+    current_server: str,
+    logger,
+) -> None:
+    instance = runtime.get_instance(current_server)
+    config = config_manager.load()
+    tunnel = config["servers"][current_server].setdefault("tunnel", {})
+    current_binary = tunnel.get("binary_path") or DEFAULT_TUNNEL_BINARIES["ngrok"]
+    default_binary = resolve_tunnel_binary(current_binary) or current_binary
+
+    print_header(current_server, runtime)
+    print(f"{C.BOLD}Ngrok Setup Wizard{C.RESET}")
+    print_connection_summary(instance)
+    print()
+    print("Ngrok requirements:")
+    print(" - The ngrok agent must be installed and reachable by MSM.")
+    print(" - Your ngrok account must be configured with an authtoken.")
+    print(" - TCP endpoints may require billing details on ngrok.")
+    if running_on_termux():
+        print(" - If you installed ngrok through a wrapper, set the binary path to that wrapper.")
+
+    binary_path = input(f"\nNgrok binary path [{default_binary}]: ").strip() or default_binary
+    resolved_binary = resolve_tunnel_binary(binary_path)
+    if resolved_binary:
+        logger.log("INFO", f"Using ngrok binary at {resolved_binary}")
+    else:
+        logger.log("WARNING", f"Ngrok binary '{binary_path}' was not found on this device.")
+
+    authtoken = input("Ngrok authtoken (leave blank to keep the existing config): ").strip()
+    if authtoken:
+        if not resolved_binary:
+            logger.log(
+                "ERROR",
+                "Cannot configure ngrok authtoken because the binary was not found.",
+            )
+        else:
+            result = run_command(
+                [resolved_binary, "config", "add-authtoken", authtoken],
+                logger=logger,
+                check=False,
+                capture_output=True,
+            )
+            if result and result.returncode == 0:
+                logger.log("SUCCESS", "Stored ngrok authtoken successfully.")
+            else:
+                stderr = ""
+                if result:
+                    stderr = (result.stderr or result.stdout or "").strip()
+                logger.log("ERROR", f"Failed to store ngrok authtoken. {stderr}".strip())
+
+    enable_tunnel = input("Enable ngrok for this server? (Y/n): ").strip().lower() != "n"
+    save_tunnel_config(
+        instance,
+        config_manager,
+        current_server,
+        provider="ngrok",
+        binary_path=binary_path,
+        enabled=enable_tunnel,
+        logger=logger,
+    )
+    pause()
+
+
+def playit_setup_wizard(
+    runtime: RuntimeManager,
+    config_manager: ConfigManager,
+    current_server: str,
+    logger,
+) -> None:
+    instance = runtime.get_instance(current_server)
+    config = config_manager.load()
+    tunnel = config["servers"][current_server].setdefault("tunnel", {})
+    current_binary = tunnel.get("binary_path")
+    if not current_binary or current_binary == DEFAULT_TUNNEL_BINARIES["ngrok"]:
+        current_binary = (
+            resolve_tunnel_binary("playit")
+            or resolve_tunnel_binary(DEFAULT_TUNNEL_BINARIES["playit"])
+            or DEFAULT_TUNNEL_BINARIES["playit"]
+        )
+
+    print_header(current_server, runtime)
+    print(f"{C.BOLD}Playit Setup Wizard{C.RESET}")
+    print_connection_summary(instance)
+    print()
+    print("Playit notes:")
+    print(" - MSM can run the playit agent in the background.")
+    print(" - You still need to link the agent to your playit account.")
+    print(f" - Create a playit TCP tunnel that forwards to 127.0.0.1:{instance.get_server_port()}.")
+    if running_on_termux():
+        print("\nInstall playit on Termux:")
+        print(" pkg update && pkg upgrade")
+        print(" pkg install tur-repo")
+        print(" pkg install playit")
+        print(" ln -s $PREFIX/bin/playit-cli $PREFIX/bin/playit")
+        print(" pkg install tmux")
+        print(" tmux")
+        print(" playit-cli")
+        print(" Press Ctrl+B, then D to detach.")
+
+    binary_path = input(f"\nPlayit binary path [{current_binary}]: ").strip() or str(current_binary)
+    resolved_binary = resolve_tunnel_binary(binary_path)
+    if resolved_binary:
+        logger.log("INFO", f"Using playit binary at {resolved_binary}")
+    else:
+        logger.log("WARNING", f"Playit binary '{binary_path}' was not found on this device.")
+
+    if resolved_binary:
+        launch_linking = input(
+            "Launch the playit linking flow now? (y/N): "
+        ).strip().lower() == "y"
+        if launch_linking:
+            print()
+            print("The playit agent will start in the foreground.")
+            print(
+                "Open the setup URL shown by playit, "
+                "link the device, then press Ctrl+C to return."
+            )
+            try:
+                subprocess.run([resolved_binary], cwd=instance.server_dir, check=False)
+            except KeyboardInterrupt:
+                logger.log("INFO", "Returned from playit linking flow.")
+            except FileNotFoundError:
+                logger.log(
+                    "ERROR",
+                    f"Playit binary '{resolved_binary}' could not be started.",
+                )
+
+    enable_tunnel = input("Enable playit for this server? (Y/n): ").strip().lower() != "n"
+    save_tunnel_config(
+        instance,
+        config_manager,
+        current_server,
+        provider="playit",
+        binary_path=binary_path,
+        enabled=enable_tunnel,
+        logger=logger,
+    )
+    pause()
+
+
+def tunnel_setup_wizard(
+    runtime: RuntimeManager,
+    config_manager: ConfigManager,
+    current_server: str,
+    logger,
+) -> None:
+    instance = runtime.get_instance(current_server)
+
+    while True:
+        config = config_manager.load()
+        tunnel = config["servers"][current_server].setdefault("tunnel", {})
+        print_header(current_server, runtime)
+        print(f"{C.BOLD}Tunnel Setup Wizard{C.RESET}")
+        print(f"Current provider: {tunnel.get('provider', 'ngrok')}")
+        print(f"Enabled: {tunnel.get('enabled', False)}")
+        print(f"Binary: {tunnel.get('binary_path', DEFAULT_TUNNEL_BINARIES['ngrok'])}")
+        print_connection_summary(instance)
+        print()
+        print(" 1. Setup ngrok")
+        print(" 2. Setup playit")
+        print(" 3. Disable tunnel for this server")
+        print(" 0. Back")
+
+        choice = input(f"\n{C.BOLD}Choose action: {C.RESET}").strip()
+        if choice == "0":
+            return
+        if choice == "1":
+            ngrok_setup_wizard(runtime, config_manager, current_server, logger)
+            continue
+        if choice == "2":
+            playit_setup_wizard(runtime, config_manager, current_server, logger)
+            continue
+        if choice == "3":
+            binary_path = tunnel.get(
+                "binary_path",
+                DEFAULT_TUNNEL_BINARIES.get(tunnel.get("provider", "ngrok"), "ngrok"),
+            )
+            save_tunnel_config(
+                instance,
+                config_manager,
+                current_server,
+                provider=tunnel.get("provider", "ngrok"),
+                binary_path=binary_path,
+                enabled=False,
+                logger=logger,
+            )
+            pause()
+            continue
+        logger.log("ERROR", "Invalid tunnel wizard selection.")
+        pause()
 
 
 def create_new_server(config_manager: ConfigManager, logger) -> None:
@@ -298,10 +556,12 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
         print(f" 6. Online mode: {server_config['server_settings']['online-mode']}")
         print(f" 7. Scheduled backups: {server_config['backup_settings']['enabled']}")
         print(f" 8. Backup interval hours: {server_config['backup_settings']['interval_hours']}")
-        print(f" 9. Ngrok tunnel: {server_config['tunnel']['enabled']}")
-        print(f"10. Ngrok binary: {server_config['tunnel']['binary_path']}")
-        print(f"11. RCON enabled: {server_config['rcon']['enabled']}")
-        print(f"12. RCON password set: {bool(server_config['rcon']['password'])}")
+        print(f" 9. Tunnel enabled: {server_config['tunnel']['enabled']}")
+        print(f"10. Tunnel provider: {server_config['tunnel']['provider']}")
+        print(f"11. Tunnel binary: {server_config['tunnel']['binary_path']}")
+        print("12. Tunnel setup wizard")
+        print(f"13. RCON enabled: {server_config['rcon']['enabled']}")
+        print(f"14. RCON password set: {bool(server_config['rcon']['password'])}")
         print(" 0. Back")
 
         choice = input(f"\n{C.BOLD}Choose setting: {C.RESET}").strip()
@@ -370,12 +630,49 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
                     tunnel["enabled"] = not tunnel.get("enabled", False)
 
             elif choice == "10":
-                value = input("Ngrok binary path [ngrok]: ").strip() or "ngrok"
+                provider_options = ", ".join(SUPPORTED_TUNNEL_PROVIDERS)
+                current_provider = server_config["tunnel"].get("provider", "ngrok")
+                value = (
+                    input(
+                        f"Tunnel provider ({provider_options}) [{current_provider}]: "
+                    ).strip().lower()
+                    or current_provider
+                )
+                if value not in SUPPORTED_TUNNEL_PROVIDERS:
+                    logger.log("ERROR", f"Tunnel provider must be one of: {provider_options}")
+                    pause()
+                    continue
+
+                def updater(saved_config: dict) -> None:
+                    tunnel = saved_config["servers"][current_server].setdefault("tunnel", {})
+                    previous_provider = tunnel.get("provider", "ngrok")
+                    previous_binary = tunnel.get("binary_path", DEFAULT_TUNNEL_BINARIES["ngrok"])
+                    tunnel["provider"] = value
+                    if previous_binary == DEFAULT_TUNNEL_BINARIES.get(
+                        previous_provider,
+                        previous_binary,
+                    ):
+                        tunnel["binary_path"] = DEFAULT_TUNNEL_BINARIES.get(value, value)
+
+            elif choice == "11":
+                current_provider = server_config["tunnel"].get("provider", "ngrok")
+                default_binary = server_config["tunnel"].get(
+                    "binary_path",
+                    DEFAULT_TUNNEL_BINARIES.get(current_provider, current_provider),
+                )
+                value = (
+                    input(f"Tunnel binary path [{default_binary}]: ").strip()
+                    or default_binary
+                )
 
                 def updater(saved_config: dict) -> None:
                     saved_config["servers"][current_server]["tunnel"]["binary_path"] = value
 
-            elif choice == "11":
+            elif choice == "12":
+                tunnel_setup_wizard(runtime, config_manager, current_server, logger)
+                continue
+
+            elif choice == "13":
                 def updater(saved_config: dict) -> None:
                     server = saved_config["servers"][current_server]
                     rcon = server.setdefault("rcon", {})
@@ -384,7 +681,7 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
                     rcon["enabled"] = enabled
                     settings["enable-rcon"] = str(enabled).lower()
 
-            elif choice == "12":
+            elif choice == "14":
                 value = input("RCON password: ").strip()
 
                 def updater(saved_config: dict) -> None:
@@ -397,8 +694,14 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
                 pause()
                 continue
 
-            config_manager.mutate(updater)
+            saved_config = config_manager.mutate(updater)
             instance.apply_server_files()
+            if choice in {"9", "10", "11"} and instance.is_running():
+                tunnel_settings = saved_config["servers"][current_server]["tunnel"]
+                if tunnel_settings.get("enabled"):
+                    instance.restart_tunnel()
+                else:
+                    instance.stop_tunnel()
         except ValueError:
             logger.log("ERROR", "A numeric value was required.")
             pause()
@@ -664,7 +967,9 @@ def main() -> None:
 
         print_header(current_server, runtime)
         print(f"{C.BOLD}{current_server}{C.RESET} | Status: {status}")
-        print(f"{C.DIM}{flavor_name} {version}{C.RESET}\n")
+        print(f"{C.DIM}{flavor_name} {version}{C.RESET}")
+        print_connection_summary(instance)
+        print()
         print(" 1. Start server")
         print(" 2. Stop server")
         print(" 3. Install or update server")
@@ -681,7 +986,9 @@ def main() -> None:
         choice = input(f"\n{C.BOLD}Choose action: {C.RESET}").strip()
         try:
             if choice == "1":
-                instance.start()
+                started = instance.start()
+                if started:
+                    instance.print_connection_details()
                 pause()
             elif choice == "2":
                 force = input("Force stop? (y/N): ").strip().lower() == "y"

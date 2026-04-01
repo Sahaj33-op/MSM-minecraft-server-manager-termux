@@ -46,6 +46,12 @@ TUNNEL_PID_FILE_NAME = ".msm.tunnel.pid"
 SERVER_PROPERTIES_FILE = "server.properties"
 EULA_FILE = "eula.txt"
 
+SUPPORTED_TUNNEL_PROVIDERS = ("ngrok", "playit")
+DEFAULT_TUNNEL_BINARIES = {
+    "ngrok": "ngrok",
+    "playit": "playit-cli",
+}
+
 COMMON_JAVA_HOME_BASES = [
     Path(os.environ.get("JAVA_HOME", "")),
     Path(os.path.expanduser("~/../usr/lib/jvm")),

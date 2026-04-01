@@ -16,6 +16,7 @@ from core.constants import (
     AUTO_RESTART_DELAY_SECONDS,
     AUTO_RESTART_POLL_INTERVAL,
     BACKUP_POLL_INTERVAL,
+    DEFAULT_TUNNEL_BINARIES,
     EULA_FILE,
     MONITOR_INTERVAL,
     PID_FILE_NAME,
@@ -33,6 +34,7 @@ from utils.system import (
     check_disk_space,
     format_bytes,
     get_java_path,
+    get_local_ipv4_addresses,
     get_screen_name,
     get_server_dir,
     is_pid_running,
@@ -44,6 +46,7 @@ from utils.system import (
     wait_for_pid_file,
     write_text_file,
 )
+from utils.tunnels import extract_playit_claim_url, extract_playit_public_endpoint
 
 
 class ServerInstance:
@@ -90,12 +93,26 @@ class ServerInstance:
     def screen_name(self) -> str:
         return get_screen_name(self.server_name)
 
+    def get_tunnel_provider(self) -> str:
+        _config, server_config = self.refresh_config()
+        return server_config.get("tunnel", {}).get("provider", "ngrok")
+
+    def get_tunnel_log_path(self, provider: str | None = None) -> Path:
+        selected_provider = provider or self.get_tunnel_provider()
+        return self.server_dir / f".msm.{selected_provider}.log"
+
     def refresh_config(self) -> tuple[dict[str, Any], dict[str, Any]]:
         config = self.config_manager.load()
         server_config = config.get("servers", {}).get(self.server_name)
         if not server_config:
             raise RuntimeError(f"Server '{self.server_name}' is not configured.")
         return config, server_config
+
+    def get_server_port(self) -> int:
+        _config, server_config = self.refresh_config()
+        flavor = server_config.get("server_flavor")
+        default_port = SERVER_FLAVORS.get(flavor or "", {}).get("default_port", 25565)
+        return int(server_config.get("server_settings", {}).get("port", default_port))
 
     def current_pid(self) -> int | None:
         pid = read_pid_file(self.pid_file)
@@ -116,6 +133,86 @@ class ServerInstance:
             self.current_pid()
             or screen_session_exists(self.screen_name, logger=self.logger)
         )
+
+    def get_connection_info(self) -> dict[str, Any]:
+        port = self.get_server_port()
+        loopback_endpoint = f"127.0.0.1:{port}"
+        lan_endpoints = [f"{address}:{port}" for address in get_local_ipv4_addresses()]
+        _config, server_config = self.refresh_config()
+        tunnel_config = server_config.get("tunnel", {})
+        tunnel_enabled = bool(tunnel_config.get("enabled"))
+        tunnel_provider = tunnel_config.get("provider", "ngrok")
+        tunnel_url = None
+        tunnel_status = "disabled"
+        tunnel_setup_url = None
+
+        if tunnel_enabled:
+            tunnel_pid = read_pid_file(self.tunnel_pid_file)
+            if tunnel_pid and is_pid_running(tunnel_pid):
+                if tunnel_provider == "ngrok":
+                    tunnel_url = get_ngrok_public_url(
+                        port,
+                        logger=self.logger,
+                        timeout=2,
+                    )
+                    tunnel_status = tunnel_url or "ngrok is running, waiting for public URL"
+                elif tunnel_provider == "playit":
+                    log_tail = self._read_tunnel_log_tail(provider="playit", line_count=25) or ""
+                    tunnel_url = extract_playit_public_endpoint(log_tail)
+                    tunnel_setup_url = extract_playit_claim_url(log_tail)
+                    if tunnel_url:
+                        tunnel_status = tunnel_url
+                    elif tunnel_setup_url:
+                        tunnel_status = "playit needs account linking"
+                    else:
+                        tunnel_status = (
+                            "playit agent is running; finish tunnel mapping in the playit dashboard"
+                        )
+                else:
+                    tunnel_status = f"{tunnel_provider} is not supported yet"
+            else:
+                tunnel_status = f"enabled, but {tunnel_provider} is not running"
+
+        return {
+            "port": port,
+            "loopback_endpoint": loopback_endpoint,
+            "lan_endpoints": lan_endpoints,
+            "tunnel_enabled": tunnel_enabled,
+            "tunnel_provider": tunnel_provider,
+            "tunnel_url": tunnel_url,
+            "tunnel_status": tunnel_status,
+            "tunnel_setup_url": tunnel_setup_url,
+        }
+
+    def _read_tunnel_log_tail(
+        self,
+        provider: str | None = None,
+        line_count: int = 3,
+    ) -> str | None:
+        log_path = self.get_tunnel_log_path(provider)
+        if not log_path.exists():
+            return None
+        try:
+            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return None
+        if not lines:
+            return None
+        return " | ".join(lines[-line_count:])
+
+    def print_connection_details(self) -> None:
+        info = self.get_connection_info()
+        self.logger.log("INFO", f"Loopback: {info['loopback_endpoint']}")
+        if info["lan_endpoints"]:
+            self.logger.log("INFO", f"LAN: {', '.join(info['lan_endpoints'])}")
+        else:
+            self.logger.log("WARNING", "LAN address not detected on this device.")
+        if info["tunnel_url"]:
+            self.logger.log("INFO", f"Tunnel: {info['tunnel_url']}")
+        else:
+            self.logger.log("INFO", f"Tunnel: {info['tunnel_status']}")
+        if info["tunnel_setup_url"]:
+            self.logger.log("INFO", f"Tunnel setup URL: {info['tunnel_setup_url']}")
 
     def ensure_server_files(self) -> None:
         self.server_dir.mkdir(parents=True, exist_ok=True)
@@ -364,6 +461,11 @@ class ServerInstance:
             self.tunnel_log_handle = None
         self.tunnel_process = None
 
+    def restart_tunnel(self) -> None:
+        self.stop_tunnel()
+        if self.is_running():
+            self.start_tunnel()
+
     def stop(self, force: bool = False) -> bool:
         with self._lock:
             if not self.is_running():
@@ -566,28 +668,35 @@ class ServerInstance:
         tunnel_config = server_config.get("tunnel", {})
         if not tunnel_config.get("enabled"):
             return
-        if tunnel_config.get("provider", "ngrok") != "ngrok":
-            self.logger.log("WARNING", "Only ngrok tunnel management is implemented right now.")
-            return
         existing_pid = read_pid_file(self.tunnel_pid_file)
         if existing_pid and is_pid_running(existing_pid):
             return
+        provider = tunnel_config.get("provider", "ngrok")
         binary = tunnel_config.get("binary_path") or _config.get("tunnel_defaults", {}).get(
             "binary_path",
-            "ngrok",
+            DEFAULT_TUNNEL_BINARIES.get(provider, provider),
         )
         resolved_binary = shutil.which(binary) or binary
         if shutil.which(resolved_binary) is None and not Path(resolved_binary).exists():
             self.logger.log(
                 "WARNING",
-                f"Ngrok binary '{binary}' was not found. Tunnel startup skipped.",
+                f"{provider.capitalize()} binary '{binary}' was not found. Tunnel startup skipped.",
             )
             return
         port = int(server_config.get("server_settings", {}).get("port", 25565))
-        log_path = self.server_dir / ".msm.ngrok.log"
+        log_path = self.get_tunnel_log_path(provider)
         self.tunnel_log_handle = log_path.open("a", encoding="utf-8")
+        if provider == "ngrok":
+            tunnel_command = [resolved_binary, "tcp", str(port), "--log", "stdout"]
+        elif provider == "playit":
+            tunnel_command = [resolved_binary]
+        else:
+            self.logger.log("WARNING", f"Tunnel provider '{provider}' is not supported.")
+            self.tunnel_log_handle.close()
+            self.tunnel_log_handle = None
+            return
         self.tunnel_process = subprocess.Popen(
-            [resolved_binary, "tcp", str(port), "--log", "stdout"],
+            tunnel_command,
             cwd=self.server_dir,
             stdout=self.tunnel_log_handle,
             stderr=subprocess.STDOUT,
@@ -595,14 +704,56 @@ class ServerInstance:
         )
         write_text_file(self.tunnel_pid_file, str(self.tunnel_process.pid))
         time.sleep(2)
-        public_url = get_ngrok_public_url(port, logger=self.logger)
-        if public_url:
-            self.logger.log("SUCCESS", f"Ngrok tunnel ready for {self.server_name}: {public_url}")
-        else:
+        if self.tunnel_process.poll() is not None:
+            remove_file(self.tunnel_pid_file)
+            exit_code = self.tunnel_process.returncode
+            log_tail = self._read_tunnel_log_tail(provider=provider)
+            self.logger.log(
+                "ERROR",
+                f"{provider.capitalize()} exited immediately for {self.server_name}.",
+                exit_code=exit_code,
+            )
+            if log_tail:
+                self.logger.log("INFO", f"{provider.capitalize()} log tail: {log_tail}")
+            if provider == "ngrok":
+                self.logger.log(
+                    "INFO",
+                    "Check your ngrok authtoken, account plan, binary path, and tunnel log.",
+                )
+            return
+        if provider == "ngrok":
+            public_url = get_ngrok_public_url(port, logger=self.logger)
+            if public_url:
+                self.logger.log(
+                    "SUCCESS",
+                    f"Ngrok tunnel ready for {self.server_name}: {public_url}",
+                )
+                return
             self.logger.log(
                 "INFO",
                 (
                     f"Ngrok process started for {self.server_name}. "
                     "Check http://127.0.0.1:4040 for status."
+                ),
+            )
+            return
+
+        playit_info = self.get_connection_info()
+        if playit_info["tunnel_setup_url"]:
+            self.logger.log(
+                "INFO",
+                f"Link this device in your browser: {playit_info['tunnel_setup_url']}",
+            )
+        if playit_info["tunnel_url"]:
+            self.logger.log(
+                "SUCCESS",
+                f"Playit tunnel ready for {self.server_name}: {playit_info['tunnel_url']}",
+            )
+        else:
+            self.logger.log(
+                "INFO",
+                (
+                    f"Playit agent started for {self.server_name}. "
+                    f"Create or update a playit tunnel that forwards to 127.0.0.1:{port}."
                 ),
             )
