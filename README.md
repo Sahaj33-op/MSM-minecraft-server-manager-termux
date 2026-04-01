@@ -78,6 +78,10 @@ cd MSM-minecraft-server-manager-termux
 source .venv/bin/activate
 python msm.py
 ```
+~/.config/msm/
+├── config.json       # Server configurations
+├── msm.db            # SQLite: sessions, metrics, backups, errors
+└── msm.log           # Rotating log (50 MB max, 30-day retention)
 
 ### Manual install on Termux
 
