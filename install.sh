@@ -31,8 +31,8 @@ log_info "Updating and upgrading Termux..."
 pkg update && pkg upgrade -y
 
 # 2. Install required system dependencies
-log_info "Installing dependencies: python, git, wget, screen..."
-pkg install python git wget screen -y
+log_info "Installing dependencies: python, git, wget, screen, java, and psutil..."
+pkg install python git wget screen openjdk-17 python-psutil -y
 
 # 3. Clone the repository
 log_info "Cloning the MSM repository..."
@@ -40,7 +40,7 @@ git clone https://github.com/sahaj33-op/MSM-minecraft-server-manager-termux.git
 cd MSM-minecraft-server-manager-termux || exit
 
 # 4. Install required Python packages
-log_info "Installing Python dependencies from requirements.txt..."
+log_info "Installing remaining Python dependencies..."
 pip install -r requirements.txt
 
 # 5. Make the main script executable
