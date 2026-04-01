@@ -19,7 +19,15 @@ PLAYIT_ENDPOINT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 PLAYIT_CLAIM_URL_PATTERN = re.compile(
-    r"https?://[^\s]*playit\.gg[^\s]*claim[^\s]*",
+    (
+        r"(?P<url>"
+        r"https?://"
+        r"(?:[a-z0-9-]+\.)*playit\.gg"
+        r"/claim/"
+        r"[A-Za-z0-9_-]+"
+        r"/?"
+        r")"
+    ),
     re.IGNORECASE,
 )
 
@@ -78,5 +86,5 @@ def extract_playit_claim_url(log_text: str) -> str | None:
     for line in reversed(log_text.splitlines()):
         match = PLAYIT_CLAIM_URL_PATTERN.search(line)
         if match:
-            return match.group(0)
+            return match.group("url")
     return None

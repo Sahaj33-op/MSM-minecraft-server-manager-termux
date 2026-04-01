@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import threading
@@ -55,7 +54,7 @@ def pause() -> None:
 
 
 def clear_screen() -> None:
-    os.system("cls" if os.name == "nt" else "clear")
+    print("\033[H\033[2J", end="", flush=True)
 
 
 def format_duration(seconds: float | int | None) -> str:
@@ -1106,8 +1105,8 @@ def main() -> None:
             else:
                 logger.log("ERROR", "Invalid menu selection.")
                 pause()
-        except KeyboardInterrupt:
-            raise SystemExit(0)
+        except KeyboardInterrupt as exc:
+            raise SystemExit(0) from exc
         except Exception as exc:
             logger.log("CRITICAL", f"Unexpected error: {exc}")
             pause()

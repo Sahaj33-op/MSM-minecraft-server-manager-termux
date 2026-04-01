@@ -84,3 +84,12 @@ def test_extract_playit_claim_url_from_log():
     """
 
     assert extract_playit_claim_url(log_text) == "https://playit.gg/claim/some-agent-token"
+
+
+def test_extract_playit_claim_url_rejects_non_claim_urls():
+    log_text = """
+    INFO unrelated https://playit.gg/docs/claiming
+    INFO unrelated https://example.com/claim/some-agent-token
+    """
+
+    assert extract_playit_claim_url(log_text) is None

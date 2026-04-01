@@ -53,8 +53,9 @@ DEFAULT_TUNNEL_BINARIES = {
     "playit": "playit-cli",
 }
 
+_java_home = os.environ.get("JAVA_HOME")
 COMMON_JAVA_HOME_BASES = [
-    Path(os.environ.get("JAVA_HOME", "")),
+    *([Path(_java_home)] if _java_home else []),
     Path(os.path.expanduser("~/../usr/lib/jvm")),
     Path("/usr/lib/jvm"),
     Path("/usr/lib64/jvm"),

@@ -736,10 +736,15 @@ class ServerInstance:
             text=True,
         )
         write_text_file(self.tunnel_pid_file, str(self.tunnel_process.pid))
-        time.sleep(2)
-        if self.tunnel_process.poll() is not None:
+        deadline = time.monotonic() + 1.0
+        exit_code = self.tunnel_process.poll()
+        while exit_code is None and time.monotonic() < deadline:
+            time.sleep(0.1)
+            exit_code = self.tunnel_process.poll()
+        if exit_code is not None:
             remove_file(self.tunnel_pid_file)
-            exit_code = self.tunnel_process.returncode
+            if self.tunnel_log_handle:
+                self.tunnel_log_handle.flush()
             log_tail = self._read_tunnel_log_tail(provider=provider)
             self.logger.log(
                 "ERROR",

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import importlib
 import shutil
 import zipfile
 from pathlib import Path
 
 import pytest
 
+import core.constants as constants
 from utils.archive import safe_extract_zip
 from utils.system import get_required_java
 
@@ -30,3 +32,12 @@ def test_get_required_java_handles_1_20_5_and_older_releases():
     assert get_required_java("1.20.5") == "21"
     assert get_required_java("1.20.4") == "17"
     assert get_required_java("1.16.5") == "8"
+
+
+def test_common_java_home_bases_skips_empty_java_home(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("JAVA_HOME", raising=False)
+    reloaded = importlib.reload(constants)
+    try:
+        assert Path("") not in reloaded.COMMON_JAVA_HOME_BASES
+    finally:
+        importlib.reload(constants)
