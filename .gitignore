@@ -33,6 +33,7 @@ MANIFEST
 .config/msm/config.json
 .config/msm/msm.db
 .config/msm/msm.log
+.msm.playit.secret
 
 # IDE settings
 .idea/

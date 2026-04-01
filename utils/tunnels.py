@@ -24,12 +24,43 @@ PLAYIT_CLAIM_URL_PATTERN = re.compile(
 )
 
 
-def build_playit_claim_command(binary_path: str | Path) -> list[str]:
-    return [str(binary_path), "--stdout", "claim"]
+def extract_last_non_empty_line(text: str) -> str | None:
+    for line in reversed(text.splitlines()):
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return None
 
 
-def build_playit_start_command(binary_path: str | Path) -> list[str]:
-    return [str(binary_path), "--stdout", "start"]
+def build_playit_claim_generate_command(binary_path: str | Path) -> list[str]:
+    return [str(binary_path), "--stdout", "claim", "generate"]
+
+
+def build_playit_claim_url_command(binary_path: str | Path, claim_code: str) -> list[str]:
+    return [str(binary_path), "--stdout", "claim", "url", claim_code]
+
+
+def build_playit_claim_exchange_command(
+    binary_path: str | Path,
+    claim_code: str,
+    secret_path: str | Path | None = None,
+) -> list[str]:
+    command = [str(binary_path), "--stdout"]
+    if secret_path:
+        command.extend(["--secret_path", str(secret_path)])
+    command.extend(["claim", "exchange", claim_code])
+    return command
+
+
+def build_playit_start_command(
+    binary_path: str | Path,
+    secret_path: str | Path | None = None,
+) -> list[str]:
+    command = [str(binary_path), "--stdout"]
+    if secret_path:
+        command.extend(["--secret_path", str(secret_path)])
+    command.append("start")
+    return command
 
 
 def extract_playit_public_endpoint(log_text: str) -> str | None:

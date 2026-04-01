@@ -1,19 +1,63 @@
 from __future__ import annotations
 
 from utils.tunnels import (
-    build_playit_claim_command,
+    build_playit_claim_exchange_command,
+    build_playit_claim_generate_command,
+    build_playit_claim_url_command,
     build_playit_start_command,
+    extract_last_non_empty_line,
     extract_playit_claim_url,
     extract_playit_public_endpoint,
 )
 
 
-def test_build_playit_claim_command_uses_explicit_subcommand():
-    assert build_playit_claim_command("playit-cli") == ["playit-cli", "--stdout", "claim"]
+def test_extract_last_non_empty_line_returns_last_non_blank_line():
+    assert extract_last_non_empty_line("\n alpha \n\n beta \n") == "beta"
 
 
-def test_build_playit_start_command_uses_explicit_subcommand():
-    assert build_playit_start_command("playit-cli") == ["playit-cli", "--stdout", "start"]
+def test_build_playit_claim_generate_command_uses_generate_subcommand():
+    assert build_playit_claim_generate_command("playit-cli") == [
+        "playit-cli",
+        "--stdout",
+        "claim",
+        "generate",
+    ]
+
+
+def test_build_playit_claim_url_command_uses_url_subcommand():
+    assert build_playit_claim_url_command("playit-cli", "claim-code") == [
+        "playit-cli",
+        "--stdout",
+        "claim",
+        "url",
+        "claim-code",
+    ]
+
+
+def test_build_playit_claim_exchange_command_uses_secret_path_and_exchange_subcommand():
+    assert build_playit_claim_exchange_command(
+        "playit-cli",
+        "claim-code",
+        secret_path=".msm.playit.secret",
+    ) == [
+        "playit-cli",
+        "--stdout",
+        "--secret_path",
+        ".msm.playit.secret",
+        "claim",
+        "exchange",
+        "claim-code",
+    ]
+
+
+def test_build_playit_start_command_uses_secret_path_and_start_subcommand():
+    assert build_playit_start_command("playit-cli", secret_path=".msm.playit.secret") == [
+        "playit-cli",
+        "--stdout",
+        "--secret_path",
+        ".msm.playit.secret",
+        "start",
+    ]
 
 
 def test_extract_playit_public_endpoint_from_tunnel_address_log():

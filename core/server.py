@@ -20,6 +20,7 @@ from core.constants import (
     EULA_FILE,
     MONITOR_INTERVAL,
     PID_FILE_NAME,
+    PLAYIT_SECRET_FILE_NAME,
     SERVER_FLAVORS,
     SERVER_PROPERTIES_FILE,
     SESSION_FILE_NAME,
@@ -94,6 +95,10 @@ class ServerInstance:
         return self.server_dir / TUNNEL_PID_FILE_NAME
 
     @property
+    def playit_secret_file(self) -> Path:
+        return self.server_dir / PLAYIT_SECRET_FILE_NAME
+
+    @property
     def screen_name(self) -> str:
         return get_screen_name(self.server_name)
 
@@ -151,6 +156,18 @@ class ServerInstance:
         tunnel_setup_url = None
 
         if tunnel_enabled:
+            if tunnel_provider == "playit" and not self.playit_secret_file.exists():
+                tunnel_status = "playit is enabled but not linked; run the tunnel setup wizard"
+                return {
+                    "port": port,
+                    "loopback_endpoint": loopback_endpoint,
+                    "lan_endpoints": lan_endpoints,
+                    "tunnel_enabled": tunnel_enabled,
+                    "tunnel_provider": tunnel_provider,
+                    "tunnel_url": tunnel_url,
+                    "tunnel_status": tunnel_status,
+                    "tunnel_setup_url": tunnel_setup_url,
+                }
             tunnel_pid = read_pid_file(self.tunnel_pid_file)
             if tunnel_pid and is_pid_running(tunnel_pid):
                 if tunnel_provider == "ngrok":
@@ -687,13 +704,25 @@ class ServerInstance:
                 f"{provider.capitalize()} binary '{binary}' was not found. Tunnel startup skipped.",
             )
             return
+        if provider == "playit" and not self.playit_secret_file.exists():
+            self.logger.log(
+                "WARNING",
+                (
+                    f"Playit secret file was not found for {self.server_name}. "
+                    "Run the tunnel setup wizard before starting playit."
+                ),
+            )
+            return
         port = int(server_config.get("server_settings", {}).get("port", 25565))
         log_path = self.get_tunnel_log_path(provider)
         self.tunnel_log_handle = log_path.open("a", encoding="utf-8")
         if provider == "ngrok":
             tunnel_command = [resolved_binary, "tcp", str(port), "--log", "stdout"]
         elif provider == "playit":
-            tunnel_command = build_playit_start_command(resolved_binary)
+            tunnel_command = build_playit_start_command(
+                resolved_binary,
+                secret_path=self.playit_secret_file,
+            )
         else:
             self.logger.log("WARNING", f"Tunnel provider '{provider}' is not supported.")
             self.tunnel_log_handle.close()

@@ -175,6 +175,7 @@ Per-server files in the server directory:
 - `.msm.tunnel.pid`
 - `.msm.ngrok.log` when ngrok is enabled
 - `.msm.playit.log` when playit is enabled
+- `.msm.playit.secret` when playit has been linked through MSM
 
 ### Monitoring and statistics
 
@@ -259,9 +260,10 @@ When `playit` is enabled:
 
 - MSM runs `playit` or `playit-cli` with the `start` subcommand in the background
 - writes output to `.msm.playit.log`
+- stores the exchanged agent secret in `.msm.playit.secret`
 - tries to extract the public endpoint or claim URL from the agent log
 - expects you to link the agent to your playit account and create the tunnel mapping in the playit dashboard
-- the setup wizard can launch `playit-cli claim` for device linking
+- the setup wizard drives `claim generate`, `claim url`, and `claim exchange`
 
 Suggested Termux install flow for playit:
 
@@ -318,6 +320,7 @@ backups/
 .msm.tunnel.pid
 .msm.ngrok.log
 .msm.playit.log
+.msm.playit.secret
 ```
 
 ## Configuration format

@@ -43,6 +43,7 @@ BACKUP_COMPRESSION_LEVEL = 6
 PID_FILE_NAME = ".msm.pid"
 SESSION_FILE_NAME = ".msm.session"
 TUNNEL_PID_FILE_NAME = ".msm.tunnel.pid"
+PLAYIT_SECRET_FILE_NAME = ".msm.playit.secret"
 SERVER_PROPERTIES_FILE = "server.properties"
 EULA_FILE = "eula.txt"
 
