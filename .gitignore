@@ -2,6 +2,12 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
+pytest-cache-files-*/
+.venv/
+.coverage
+.test_tmp/
+tmp_*/
 
 # Distribution / packaging
 .Python
@@ -27,6 +33,7 @@ MANIFEST
 .config/msm/config.json
 .config/msm/msm.db
 .config/msm/msm.log
+.msm.playit.secret
 
 # IDE settings
 .idea/
