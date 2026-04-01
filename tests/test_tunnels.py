@@ -1,6 +1,19 @@
 from __future__ import annotations
 
-from utils.tunnels import extract_playit_claim_url, extract_playit_public_endpoint
+from utils.tunnels import (
+    build_playit_claim_command,
+    build_playit_start_command,
+    extract_playit_claim_url,
+    extract_playit_public_endpoint,
+)
+
+
+def test_build_playit_claim_command_uses_explicit_subcommand():
+    assert build_playit_claim_command("playit-cli") == ["playit-cli", "--stdout", "claim"]
+
+
+def test_build_playit_start_command_uses_explicit_subcommand():
+    assert build_playit_start_command("playit-cli") == ["playit-cli", "--stdout", "start"]
 
 
 def test_extract_playit_public_endpoint_from_tunnel_address_log():

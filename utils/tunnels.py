@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 PLAYIT_TUNNEL_ADDRESS_PATTERN = re.compile(
     r"tunnel_address=(?P<endpoint>[^\s,]+)",
@@ -21,6 +22,14 @@ PLAYIT_CLAIM_URL_PATTERN = re.compile(
     r"https?://[^\s]*playit\.gg[^\s]*claim[^\s]*",
     re.IGNORECASE,
 )
+
+
+def build_playit_claim_command(binary_path: str | Path) -> list[str]:
+    return [str(binary_path), "--stdout", "claim"]
+
+
+def build_playit_start_command(binary_path: str | Path) -> list[str]:
+    return [str(binary_path), "--stdout", "start"]
 
 
 def extract_playit_public_endpoint(log_text: str) -> str | None:

@@ -39,6 +39,7 @@ from utils.system import (
     running_on_termux,
     sanitize_input,
 )
+from utils.tunnels import build_playit_claim_command
 
 
 def pause() -> None:
@@ -266,7 +267,8 @@ def playit_setup_wizard(
     print_connection_summary(instance)
     print()
     print("Playit notes:")
-    print(" - MSM can run the playit agent in the background.")
+    print(" - MSM uses `playit-cli claim` for device linking.")
+    print(" - MSM uses `playit-cli start` for the managed background agent.")
     print(" - You still need to link the agent to your playit account.")
     print(f" - Create a playit TCP tunnel that forwards to 127.0.0.1:{instance.get_server_port()}.")
     if running_on_termux():
@@ -275,10 +277,7 @@ def playit_setup_wizard(
         print(" pkg install tur-repo")
         print(" pkg install playit")
         print(" ln -s $PREFIX/bin/playit-cli $PREFIX/bin/playit")
-        print(" pkg install tmux")
-        print(" tmux")
-        print(" playit-cli")
-        print(" Press Ctrl+B, then D to detach.")
+        print(" MSM does not need tmux when it manages playit for this server.")
 
     binary_path = input(f"\nPlayit binary path [{current_binary}]: ").strip() or str(current_binary)
     resolved_binary = resolve_tunnel_binary(binary_path)
@@ -293,13 +292,17 @@ def playit_setup_wizard(
         ).strip().lower() == "y"
         if launch_linking:
             print()
-            print("The playit agent will start in the foreground.")
+            print("MSM will run `playit-cli claim` in the foreground.")
             print(
                 "Open the setup URL shown by playit, "
-                "link the device, then press Ctrl+C to return."
+                "link the device, then return to MSM."
             )
             try:
-                subprocess.run([resolved_binary], cwd=instance.server_dir, check=False)
+                subprocess.run(
+                    build_playit_claim_command(resolved_binary),
+                    cwd=instance.server_dir,
+                    check=False,
+                )
             except KeyboardInterrupt:
                 logger.log("INFO", "Returned from playit linking flow.")
             except FileNotFoundError:

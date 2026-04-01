@@ -46,7 +46,11 @@ from utils.system import (
     wait_for_pid_file,
     write_text_file,
 )
-from utils.tunnels import extract_playit_claim_url, extract_playit_public_endpoint
+from utils.tunnels import (
+    build_playit_start_command,
+    extract_playit_claim_url,
+    extract_playit_public_endpoint,
+)
 
 
 class ServerInstance:
@@ -689,7 +693,7 @@ class ServerInstance:
         if provider == "ngrok":
             tunnel_command = [resolved_binary, "tcp", str(port), "--log", "stdout"]
         elif provider == "playit":
-            tunnel_command = [resolved_binary]
+            tunnel_command = build_playit_start_command(resolved_binary)
         else:
             self.logger.log("WARNING", f"Tunnel provider '{provider}' is not supported.")
             self.tunnel_log_handle.close()
@@ -753,7 +757,7 @@ class ServerInstance:
             self.logger.log(
                 "INFO",
                 (
-                    f"Playit agent started for {self.server_name}. "
+                    f"Playit agent started with `start` for {self.server_name}. "
                     f"Create or update a playit tunnel that forwards to 127.0.0.1:{port}."
                 ),
             )

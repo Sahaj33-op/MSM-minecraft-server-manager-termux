@@ -257,10 +257,11 @@ When `ngrok` is enabled:
 
 When `playit` is enabled:
 
-- MSM starts the `playit` or `playit-cli` agent in the background
+- MSM runs `playit` or `playit-cli` with the `start` subcommand in the background
 - writes output to `.msm.playit.log`
 - tries to extract the public endpoint or claim URL from the agent log
 - expects you to link the agent to your playit account and create the tunnel mapping in the playit dashboard
+- the setup wizard can launch `playit-cli claim` for device linking
 
 Suggested Termux install flow for playit:
 
@@ -268,8 +269,8 @@ Suggested Termux install flow for playit:
 - `pkg install tur-repo`
 - `pkg install playit`
 - `ln -s $PREFIX/bin/playit-cli $PREFIX/bin/playit`
-- `pkg install tmux`
-- run `tmux`, then `playit-cli`, and detach with `Ctrl+B` then `D` if you want to keep it open outside MSM
+
+When MSM manages the tunnel, `tmux` is not required. `tmux` is only useful if you want to run the playit agent outside MSM.
 
 Current limitation:
 
