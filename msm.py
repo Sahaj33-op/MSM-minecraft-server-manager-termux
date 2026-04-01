@@ -731,7 +731,11 @@ def check_dependencies():
     if missing:
         logger.log('WARNING', f"Missing dependencies: {', '.join(missing)}")
         if input("Attempt to install missing dependencies with 'pkg'? (y/N): ").lower() == 'y':
-            run_command(f"pkg install {' '.join(missing)} -y")
+            # Termux package mapping
+            pkg_map = {'java': 'openjdk-17', 'php': 'php', 'wget': 'wget', 'screen': 'screen'}
+            termux_pkgs = [pkg_map.get(d, d) for d in missing]
+            
+            run_command(f"pkg install {' '.join(termux_pkgs)} -y")
             return all(shutil.which(d) for d in missing)
         return False
     logger.log('SUCCESS', "All essential dependencies are installed.")
