@@ -189,22 +189,18 @@ Enhanced Minecraft Server Manager (MSM) v2 is a **professional, enterprise-grade
 # 1. Update and upgrade Termux
 pkg update && pkg upgrade -y
 
-# 2. Install Python and Git
-pkg install python git -y
+# 2. Install dependencies (Crucial for Android)
+pkg install python git wget screen openjdk-17 openjdk-21 python-psutil -y
 
 # 3. Clone the repository
 git clone https://github.com/sahaj33-op/MSM-minecraft-server-manager-termux.git
 cd MSM-minecraft-server-manager-termux
 
-# 4. Install dependencies
-pip install requests psutil
-pkg install openjdk-17 -y
-pkg install openjdk-21 -y
+# 4. Install standard Python packages
+pip install requests
 
-# 5. Make executable
+# 5. Make executable and run
 chmod +x msm.py
-
-# 6. Run MSM
 python3 msm.py
 ```
 
