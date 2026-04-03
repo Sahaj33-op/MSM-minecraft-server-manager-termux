@@ -1,89 +1,155 @@
-# Minecraft Server Manager (MSM) 6.0
+<div align="center">
 
-MSM is a terminal-based manager for running multiple Minecraft servers from one machine, with a workflow aimed at Termux and Linux environments. It installs server binaries, starts them inside `screen`, tracks sessions and performance in SQLite, manages world backups, and exposes a CLI for routine server administration.
+# ⛏️ MSM — Minecraft Server Manager
 
-This README is written against the current codebase in this repository. It does not describe features that are not implemented.
+**Terminal-native server management for Termux and Linux.**  
+Multi-server. Persistent SQLite tracking. Zero-GUI workflow.
 
-## What MSM does
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://python.org)
+[![Platform](https://img.shields.io/badge/Platform-Termux%20%7C%20Linux-orange?logo=android)](https://termux.dev)
+[![Stars](https://img.shields.io/github/stars/Sahaj33-op/MSM-minecraft-server-manager-termux?style=flat&color=yellow)](https://github.com/Sahaj33-op/MSM-minecraft-server-manager-termux/stargazers)
 
-- Manages multiple named server definitions from one CLI.
-- Supports Paper, Purpur, Folia, Vanilla, Fabric, Quilt, and PocketMine-MP.
-- Downloads server binaries directly from upstream APIs.
-- Starts each server in its own `screen` session and records its PID in a `.msm.pid` file.
-- Tracks sessions, crashes, restarts, backups, and performance metrics in SQLite.
-- Supports optional auto-restart per server while MSM is running.
-- Supports manual backups and scheduled backups while MSM is running.
-- Lets you edit `server.properties` and `eula.txt` from inside the CLI.
-- Uses RCON for command delivery when enabled, and falls back to `screen -X stuff` otherwise.
-- Can run `ngrok` or `playit` as a tunnel provider for a server.
+</div>
 
-## What MSM does not do
+-----
 
-- It does not keep backup scheduling or auto-restart alive after the MSM process exits.
-- It does not currently collect live player counts, TPS, or MSPT, even though the database schema has placeholders for them.
-- It is not a Windows-native hosting workflow. The actual runtime depends on `screen` and POSIX shell behavior.
+## What MSM Is
 
-## Supported server flavors
+MSM manages multiple Minecraft server instances from a single TUI. It downloads server binaries, starts them inside `screen` sessions, records performance data in SQLite, handles world backups, and exposes a full CLI for routine administration — all from a phone running Termux, or a Linux box.
 
-| Flavor | Runtime | Default port | Notes |
-| --- | --- | ---: | --- |
-| PaperMC | Java | 25565 | Build metadata fetched from PaperMC API |
-| Purpur | Java | 25565 | Latest build fetched per version |
-| Folia | Java | 25565 | Uses PaperMC API style |
-| Vanilla | Java | 25565 | Mojang version manifest |
-| Fabric | Java | 25565 | Uses latest loader and installer metadata |
-| Quilt | Java | 25565 | Uses latest loader metadata |
-| PocketMine-MP | PHP | 19132 | Downloads `.phar` release assets |
+**This README describes what is implemented, not what is planned.**
 
-## Runtime requirements
+-----
 
-### Required
+## Table of Contents
 
-- Python 3.10 or newer
-- `screen`
-- Internet access for server downloads and metadata requests
+- [Features](#features)
+- [Supported Server Flavors](#supported-server-flavors)
+- [Requirements](#requirements)
+- [Installation](#installation)
+  - [Quick Install (Termux)](#quick-install-termux)
+  - [Manual Install (Termux)](#manual-install-termux)
+  - [Manual Install (Linux)](#manual-install-linux)
+- [Basic Workflow](#basic-workflow)
+- [CLI Menu Reference](#cli-menu-reference)
+- [Feature Details](#feature-details)
+  - [Multi-Server Runtime Model](#multi-server-runtime-model)
+  - [Process Management](#process-management)
+  - [Monitoring & Statistics](#monitoring--statistics)
+  - [Auto-Restart](#auto-restart)
+  - [World Backups](#world-backups)
+  - [Command Delivery](#command-delivery)
+  - [Tunnel Support](#tunnel-support)
+  - [Java Detection](#java-detection)
+- [Files & Directories](#files--directories)
+- [Configuration Format](#configuration-format)
+- [Project Layout](#project-layout)
+- [Security Notes](#security-notes)
+- [Development](#development)
+- [Known Limitations](#known-limitations)
+- [License](#license)
 
-### Required for some server types
+-----
 
-- Java 8 for Minecraft `1.16.x` and older
-- Java 17 for Minecraft `1.17` through `1.20.4`
-- Java 21 for Minecraft `1.20.5+`
-- PHP for PocketMine-MP
+## Features
+
+**What MSM does:**
+
+- Manage multiple named server definitions from one CLI
+- Download server binaries directly from upstream APIs (PaperMC, Mojang, Fabric, etc.)
+- Start each server in its own `screen` session with PID tracking via `.msm.pid`
+- Track sessions, crashes, restarts, backups, and CPU/RAM metrics in SQLite
+- Optional per-server auto-restart while MSM is running
+- Manual and scheduled world backups (ZIP archives)
+- Edit `server.properties` and `eula.txt` from within the CLI
+- RCON command delivery with `screen -X stuff` fallback
+- `ngrok` and `playit` tunnel management
+
+**What MSM does not do:**
+
+- Keep backup scheduling or auto-restart alive after the MSM process exits
+- Collect live player counts, TPS, or MSPT (schema exists, collection not implemented)
+- Run natively on Windows (`screen` and POSIX behavior are hard dependencies)
+
+-----
+
+## Supported Server Flavors
+
+|Flavor           |Runtime|Default Port|Binary Source                     |
+|-----------------|-------|------------|----------------------------------|
+|**PaperMC**      |Java   |25565       |PaperMC API (build metadata)      |
+|**Purpur**       |Java   |25565       |Latest build per version          |
+|**Folia**        |Java   |25565       |PaperMC API style                 |
+|**Vanilla**      |Java   |25565       |Mojang version manifest           |
+|**Fabric**       |Java   |25565       |Latest loader + installer metadata|
+|**Quilt**        |Java   |25565       |Latest loader metadata            |
+|**PocketMine-MP**|PHP    |19132       |`.phar` release assets            |
+
+-----
+
+## Requirements
+
+### Always Required
+
+|Dependency  |Purpose                          |
+|------------|---------------------------------|
+|Python 3.10+|MSM runtime                      |
+|`screen`    |Server session isolation         |
+|Internet    |Binary downloads and API metadata|
+
+### Java Version Matrix
+
+|Minecraft Version |Required Java|
+|------------------|-------------|
+|`1.16.x` and older|Java 8       |
+|`1.17` – `1.20.4` |Java 17      |
+|`1.20.5+`         |Java 21      |
 
 ### Optional
 
-- `ngrok` for TCP tunnel management
-- `playit` or `playit-cli` for playit.gg agent management
+|Tool                   |Purpose             |
+|-----------------------|--------------------|
+|`ngrok`                |TCP tunnel via ngrok|
+|`playit` / `playit-cli`|Tunnel via playit.gg|
+|`php`                  |PocketMine-MP only  |
+
+-----
 
 ## Installation
 
-### Quick install on Termux
+### Quick Install (Termux)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sahaj33-op/MSM-minecraft-server-manager-termux/main/install.sh | bash
 ```
 
-The installer:
+The installer handles:
 
-- updates Termux packages
-- installs `python`, `git`, `screen`, `openjdk-17`, `openjdk-21`, and `php`
-- clones this repository
-- creates `.venv`
-- installs `requirements.txt`
+- Termux package updates
+- `python`, `git`, `screen`, `openjdk-17`, `openjdk-21`, `php`
+- Repository clone, virtualenv setup, and `requirements.txt` install
 
-After installation:
+**After install:**
 
 ```bash
 cd MSM-minecraft-server-manager-termux
 source .venv/bin/activate
 python msm.py
 ```
-~/.config/msm/
-├── config.json       # Server configurations
-├── msm.db            # SQLite: sessions, metrics, backups, errors
-└── msm.log           # Rotating log (50 MB max, 30-day retention)
 
-### Manual install on Termux
+**MSM data is stored at:**
+
+```
+~/.config/msm/
+├── config.json     # server configurations
+├── msm.db          # SQLite: sessions, metrics, backups, errors
+└── msm.log         # rotating log (50 MB max, 30-day retention)
+```
+
+-----
+
+### Manual Install (Termux)
 
 ```bash
 pkg update && pkg upgrade -y
@@ -100,17 +166,11 @@ python -m pip install -r requirements.txt
 python msm.py
 ```
 
-### Manual install on Linux
+-----
 
-Install the platform equivalents of:
+### Manual Install (Linux)
 
-- `python3`
-- `python3-venv`
-- `screen`
-- Java runtimes you need
-- `php` if you want PocketMine-MP
-
-Then:
+Install platform equivalents of: `python3`, `python3-venv`, `screen`, Java runtimes, and `php` (if using PocketMine-MP).
 
 ```bash
 git clone https://github.com/sahaj33-op/MSM-minecraft-server-manager-termux.git
@@ -124,212 +184,228 @@ python -m pip install -r requirements.txt
 python msm.py
 ```
 
-## Basic workflow
+-----
 
-1. Launch MSM with `python msm.py`.
-2. Create a server profile.
-3. Install a server flavor and version.
-4. Configure RAM, port, backups, tunnel provider, and optional RCON.
-5. Start the server.
-6. Use the world manager, console attach, command menu, and statistics view as needed.
+## Basic Workflow
 
-## Main menu
+```
+1. python msm.py          → launch MSM
+2. Create server profile  → name, flavor, version
+3. Install binary         → fetched from upstream API
+4. Configure server       → RAM, port, RCON, tunnel, backups
+5. Start server           → spawns in screen session
+6. Manage live            → console attach, commands, stats, backups
+```
 
-The current CLI exposes these actions:
+-----
 
-- Start server
-- Stop server
-- Install or update server
-- Configure server
-- Edit `server.properties` and `eula.txt`
-- Attach to console
-- World manager
-- Send command
-- Statistics
-- Create new server
-- Switch server
-- Exit
+## CLI Menu Reference
 
-## Current feature behavior
+|Action                 |Description                                   |
+|-----------------------|----------------------------------------------|
+|Start server           |Launches server in a `screen` session         |
+|Stop server            |Sends stop signal; waits for clean exit       |
+|Install / Update server|Downloads binary from upstream                |
+|Configure server       |RAM, port, RCON, tunnel, backup settings      |
+|Edit server.properties |In-TUI property editor                        |
+|Edit eula.txt          |Accept EULA from the CLI                      |
+|Attach to console      |Connects to the live `screen` session         |
+|World manager          |Backup, restore, world switching              |
+|Send command           |RCON or `screen -X stuff` delivery            |
+|Statistics             |Session history, crash count, resource metrics|
+|Create new server      |Add another server profile                    |
+|Switch server          |Change active server context                  |
+|Exit                   |Exits MSM (running servers stay in `screen`)  |
 
-### Multi-server runtime model
+-----
 
-Each configured server gets its own `ServerInstance`. Runtime state is not stored in module-level globals anymore.
+## Feature Details
+
+### Multi-Server Runtime Model
+
+Each configured server gets its own `ServerInstance` object. No shared global session state.
 
 Each running server owns:
 
-- its own `screen` session name
-- its own PID file
-- its own session ID file
-- its own monitoring thread
-- its own auto-restart thread
-- its own backup thread
-- its own optional tunnel process
+- Its own `screen` session name
+- Its own PID file and session ID file
+- Its own monitoring thread
+- Its own auto-restart thread
+- Its own backup thread
+- Its own optional tunnel process
 
-This means multiple servers can run concurrently without overwriting each other's session IDs or stop events.
+Multiple servers run concurrently without session ID conflicts.
 
-### Process management
+-----
 
-MSM starts servers inside `screen` using a small shell wrapper that writes the process PID to `.msm.pid` before `exec`.
+### Process Management
 
-Per-server files in the server directory:
+MSM starts servers via a shell wrapper inside `screen` that writes the PID to `.msm.pid` before `exec`. Per-server state files in the server directory:
 
-- `.msm.pid`
-- `.msm.session`
-- `.msm.tunnel.pid`
-- `.msm.ngrok.log` when ngrok is enabled
-- `.msm.playit.log` when playit is enabled
-- `.msm.playit.secret` when playit has been linked through MSM
+```
+.msm.pid              # process ID
+.msm.session          # screen session name
+.msm.tunnel.pid       # tunnel process ID
+.msm.ngrok.log        # ngrok output log
+.msm.playit.log       # playit agent output log
+.msm.playit.secret    # playit agent secret (after claim exchange)
+```
 
-### Monitoring and statistics
+-----
 
-While MSM is running, each active server can record:
+### Monitoring & Statistics
 
-- RAM usage percent
-- CPU usage percent
-- session start and end times
-- crash count
-- restart count
-- backup history
+While MSM is running, each active server records:
 
-Metrics are sampled every 60 seconds and stored in SQLite with WAL mode enabled.
+|Metric                 |Interval               |
+|-----------------------|-----------------------|
+|RAM usage %            |Every 60 seconds       |
+|CPU usage %            |Every 60 seconds       |
+|Session start/end times|On start/stop events   |
+|Crash count            |On unexpected exits    |
+|Restart count          |On auto-restart trigger|
+|Backup history         |On each backup creation|
 
-### Auto-restart
+All data is stored in SQLite with WAL mode enabled.
 
-Auto-restart is controlled per server. When enabled:
+-----
 
-- MSM checks the server every 15 seconds
-- waits 5 seconds before restarting after an unexpected exit
-- increments crash and restart counters in the database
+### Auto-Restart
 
-Important:
+Auto-restart is configured per server. When enabled:
 
-- auto-restart only works while the MSM process is still running
-- if you exit MSM and leave servers running in `screen`, restart supervision stops until you launch MSM again
+- MSM polls the server process every **15 seconds**
+- Waits **5 seconds** before restarting after an unexpected exit
+- Increments crash and restart counters in the database
 
-### Backups
+> **Important:** Auto-restart only runs while the MSM process is alive. If you exit MSM while a server is running in `screen`, restart supervision stops until you re-launch MSM.
 
-World backups are ZIP archives stored under:
+-----
 
-```text
+### World Backups
+
+Backups are ZIP archives stored under:
+
+```
 ~/minecraft-<server-name>/backups/
 ```
 
-Behavior:
+|Behavior         |Detail                                                     |
+|-----------------|-----------------------------------------------------------|
+|Manual backups   |Available from world manager                               |
+|Scheduled backups|Per-server, only while MSM is running and server is online |
+|Backup threading |Offloaded to worker thread with a CLI spinner              |
+|Restore guard    |Blocked while server is running                            |
+|Path safety      |Symlink blocking + path validation against zip-slip attacks|
 
-- manual backups are available from the world manager
-- scheduled backups are available per server
-- scheduled backups only run while MSM is running and the server is online
-- backup creation is offloaded to a worker thread with a spinner in the CLI
-- restore is blocked while the server is running
-- restore uses path validation and symlink checks to block zip-slip style archive attacks
+World discovery order:
 
-World discovery uses:
+1. `level-name` from `server.properties`
+1. Fallback: directories starting with `world`
 
-- `level-name` from `server.properties` when available
-- fallback matching for directories starting with `world`
+-----
 
-### Command delivery
+### Command Delivery
 
-The command menu sends commands to the selected running server.
+|Method           |Condition                         |
+|-----------------|----------------------------------|
+|RCON             |Enabled + password set            |
+|`screen -X stuff`|RCON disabled or connection failed|
 
-Behavior:
+RCON support covers command execution only — not console streaming.
 
-- if RCON is enabled and a password is set, MSM tries RCON first
-- if RCON fails or is disabled, MSM falls back to `screen -X stuff`
+-----
 
-RCON support is intentionally small and only covers command execution.
+### Tunnel Support
 
-### Tunnels
+MSM manages tunnel processes locally. Dashboard-side configuration (for playit) is still manual.
 
-MSM currently supports two tunnel providers:
+#### ngrok
 
-- `ngrok`
-- `playit`
+```
+MSM starts → ngrok tcp <port>
+           → writes to .msm.ngrok.log
+           → queries http://127.0.0.1:4040/api/tunnels for public URL
+```
 
-For tunnel management:
+Store your authtoken:
 
-- MSM stores the tunnel PID in `.msm.tunnel.pid`
-- MSM shows localhost, LAN/Wi-Fi, and tunnel connection targets on the main screen
-- MSM exposes a tunnel setup wizard from the server configuration menu
+```bash
+ngrok config add-authtoken <your-token>
+```
 
-When `ngrok` is enabled:
+#### playit
 
-- MSM starts `ngrok tcp <server-port>`
-- writes output to `.msm.ngrok.log`
-- queries the local ngrok API on `http://127.0.0.1:4040/api/tunnels` to discover the public URL
-- the setup wizard can store your authtoken with `ngrok config add-authtoken`
+```
+MSM starts → playit start (background)
+           → writes to .msm.playit.log
+           → stores agent secret in .msm.playit.secret
+           → attempts to extract public endpoint from agent log
+```
 
-When `playit` is enabled:
+The setup wizard drives: `claim generate` → `claim url` → `claim exchange`
 
-- MSM runs `playit` or `playit-cli` with the `start` subcommand in the background
-- writes output to `.msm.playit.log`
-- stores the exchanged agent secret in `.msm.playit.secret`
-- tries to extract the public endpoint or claim URL from the agent log
-- expects you to link the agent to your playit account and create the tunnel mapping in the playit dashboard
-- the setup wizard drives `claim generate`, `claim url`, and `claim exchange`
+**Termux install for playit:**
 
-Suggested Termux install flow for playit:
+```bash
+pkg update && pkg upgrade
+pkg install tur-repo
+pkg install playit
+ln -s $PREFIX/bin/playit-cli $PREFIX/bin/playit
+```
 
-- `pkg update && pkg upgrade`
-- `pkg install tur-repo`
-- `pkg install playit`
-- `ln -s $PREFIX/bin/playit-cli $PREFIX/bin/playit`
+> `tmux` is not required when MSM manages the tunnel. Use it only if you want to run the playit agent independently.
 
-When MSM manages the tunnel, `tmux` is not required. `tmux` is only useful if you want to run the playit agent outside MSM.
+-----
 
-Current limitation:
-
-- playit tunnel creation is not automated through the playit API or website; MSM manages the local agent only
-
-### Java detection
+### Java Detection
 
 MSM resolves Java in this order:
 
-1. `config.json` `java_homes`
-2. `java` found on `PATH`
-3. common JVM directories such as:
-   - `$JAVA_HOME`
-   - `~/../usr/lib/jvm`
-   - `/usr/lib/jvm`
-   - `/usr/lib64/jvm`
+1. `java_homes` map in `config.json`
+1. `java` on `PATH`
+1. Common JVM directories:
+- `$JAVA_HOME`
+- `~/../usr/lib/jvm`
+- `/usr/lib/jvm`
+- `/usr/lib64/jvm`
 
-The selected binary is validated with `java -version`; MSM does not assume the default `java` matches the required version.
+The selected binary is validated with `java -version` before use.
 
-## Files and directories
+-----
 
-### Application data
+## Files & Directories
 
-- Config: `~/.config/msm/config.json`
-- Database: `~/.config/msm/msm.db`
-- Log file: `~/.config/msm/msm.log`
+### Application Data
 
-### Server directories
+```
+~/.config/msm/
+├── config.json     # server configurations and global defaults
+├── msm.db          # SQLite database
+└── msm.log         # rotating application log
+```
 
-Each server is stored under:
+### Server Directories
 
-```text
+```
 ~/minecraft-<sanitized-server-name>/
+├── server.jar          # (or *.phar for PocketMine-MP)
+├── server.properties
+├── eula.txt
+├── backups/
+├── .msm.pid
+├── .msm.session
+├── .msm.tunnel.pid
+├── .msm.ngrok.log
+├── .msm.playit.log
+└── .msm.playit.secret
 ```
 
-That directory typically contains:
+-----
 
-```text
-server.jar or *.phar
-server.properties
-eula.txt
-backups/
-.msm.pid
-.msm.session
-.msm.tunnel.pid
-.msm.ngrok.log
-.msm.playit.log
-.msm.playit.secret
-```
+## Configuration Format
 
-## Configuration format
-
-MSM creates and migrates `config.json` automatically. The current structure looks like this:
+MSM creates and migrates `config.json` automatically.
 
 ```json
 {
@@ -379,32 +455,40 @@ MSM creates and migrates `config.json` automatically. The current structure look
 }
 ```
 
-## Project layout
+-----
 
-```text
-msm.py              # entrypoint
-core/               # config, runtime registry, per-server lifecycle
-db/                 # SQLite manager
-ui/                 # CLI flows and presentation
-utils/              # networking, archive safety, properties, logging, system helpers
-tests/              # regression tests
+## Project Layout
+
+```
+msm.py          # entrypoint
+core/           # config, runtime registry, per-server lifecycle
+db/             # SQLite manager
+ui/             # CLI flows and presentation
+utils/          # networking, archive safety, properties, logging, system helpers
+tests/          # regression tests
 ```
 
-## Security and reliability notes
+-----
 
-The current codebase includes these hardening changes:
+## Security Notes
 
-- per-server runtime state instead of shared global session state
-- PID file tracking instead of parsing `screen -ls` output for PIDs
-- SQLite WAL mode and busy timeout
-- ZIP restore path validation and symlink blocking
-- argument-list subprocess calls instead of `shell=True`
-- Java runtime validation before startup
-- sanitized server names for derived paths and screen names
+Hardening applied in the current codebase:
+
+|Area             |Implementation                                                      |
+|-----------------|--------------------------------------------------------------------|
+|Session isolation|Per-server runtime state; no shared global session                  |
+|PID tracking     |`.msm.pid` files instead of parsing `screen -ls`                    |
+|Database safety  |SQLite WAL mode + busy timeout                                      |
+|Archive safety   |ZIP restore path validation + symlink blocking (zip-slip prevention)|
+|Subprocess safety|Argument-list calls; no `shell=True`                                |
+|Java validation  |Runtime validated with `java -version` before use                   |
+|Path sanitization|Server names sanitized before use in derived paths and screen names |
+
+-----
 
 ## Development
 
-### Install dev dependencies
+### Setup
 
 ```bash
 python -m venv .venv
@@ -413,9 +497,7 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt -r requirements-dev.txt
 ```
 
-### Verification commands
-
-These are the same checks used in CI:
+### Checks (same as CI)
 
 ```bash
 python -m flake8 --jobs=1 .
@@ -424,22 +506,37 @@ python -m pytest
 python -m compileall msm.py core db ui utils tests
 ```
 
-### CI
+### CI Pipeline
 
-GitHub Actions runs:
+GitHub Actions runs on every push:
 
-- `flake8`
-- `black --check`
-- `pytest`
-- `compileall`
+```
+flake8      → style and lint
+black       → format enforcement
+pytest      → test suite
+compileall  → bytecode validation
+```
 
-## Known limitations
+-----
 
-- The runtime is designed for Termux/Linux. Development and tests can run elsewhere, but actual hosting depends on `screen`.
-- Exiting MSM while leaving servers active also stops the in-process monitor, auto-restart, and scheduled backup threads.
-- tunnel management supports `ngrok` and `playit`, but dashboard-side tunnel creation is still manual for playit.
-- PocketMine-MP support covers binary download and process start, but the CLI is primarily optimized around Java server configuration fields.
+## Known Limitations
+
+- **Thread lifetime:** Exiting MSM while servers are active stops the in-process monitor, auto-restart, and scheduled backup threads. Servers keep running in `screen`; supervision resumes when you relaunch MSM.
+- **playit dashboard:** MSM manages the local agent only. Tunnel creation in the playit dashboard is still manual.
+- **PocketMine-MP:** Binary download and process start work. The configuration UI is optimized around Java server fields.
+- **Live metrics:** TPS, MSPT, and player counts are not yet collected despite schema placeholders existing.
+- **Platform:** Actual hosting requires `screen` and POSIX behavior. Dev and tests can run elsewhere.
+
+-----
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE).
+MIT — see [`LICENSE`](LICENSE).
+
+-----
+
+<div align="center">
+
+Made for Termux. Built for control.
+
+</div>
