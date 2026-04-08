@@ -31,7 +31,7 @@ if command -v pkg >/dev/null 2>&1; then
     pkg upgrade -y
 
     log_info "Installing system dependencies..."
-    pkg install python git screen openjdk-17 openjdk-21 php -y
+    pkg install python git screen openjdk-17 openjdk-21 php python-psutil -y
 else
     log_warning "pkg was not found. Install python3, git, screen, Java, and PHP manually."
 fi
@@ -46,7 +46,7 @@ fi
 cd "${REPO_DIR}"
 
 log_info "Creating a virtual environment..."
-python -m venv .venv
+python -m venv --system-site-packages .venv
 
 log_info "Installing Python dependencies inside .venv..."
 # shellcheck disable=SC1091
