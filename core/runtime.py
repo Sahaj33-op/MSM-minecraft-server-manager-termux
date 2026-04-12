@@ -16,7 +16,6 @@ class RuntimeManager:
         self.logger = logger
         self._lock = threading.RLock()
         self._instances: dict[str, ServerInstance] = {}
-        self.resume_running_servers()
 
     def get_instance(self, server_name: str) -> ServerInstance:
         with self._lock:
@@ -29,8 +28,6 @@ class RuntimeManager:
                     self.logger,
                 )
                 self._instances[server_name] = instance
-                if instance.is_running():
-                    instance.resume_background_services()
             return instance
 
     def resume_running_servers(self) -> None:

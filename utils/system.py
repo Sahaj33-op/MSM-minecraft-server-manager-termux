@@ -47,13 +47,21 @@ def run_command(
     timeout: int | None = None,
     cwd: str | os.PathLike[str] | None = None,
     env: dict[str, str] | None = None,
+    sensitive_values: list[str] | None = None,
+    log_command: bool = True,
 ) -> subprocess.CompletedProcess[str] | None:
     """Execute a subprocess without shell expansion."""
     if isinstance(command, str):
         command = shlex.split(command)
+    safe_command = _redact_command(command, sensitive_values=sensitive_values)
     try:
-        if logger:
-            logger.log("DEBUG", "Executing command", command=command, cwd=str(cwd or Path.cwd()))
+        if logger and log_command:
+            logger.log(
+                "DEBUG",
+                "Executing command",
+                command=safe_command,
+                cwd=str(cwd or Path.cwd()),
+            )
         return subprocess.run(
             command,
             check=check,
@@ -66,16 +74,37 @@ def run_command(
         )
     except subprocess.CalledProcessError as exc:
         if logger:
-            logger.log("ERROR", "Command failed", command=command, returncode=exc.returncode)
+            logger.log("ERROR", "Command failed", command=safe_command, returncode=exc.returncode)
         return None
     except subprocess.TimeoutExpired:
         if logger:
-            logger.log("ERROR", "Command timed out", command=command, timeout=timeout)
+            logger.log("ERROR", "Command timed out", command=safe_command, timeout=timeout)
         return None
     except FileNotFoundError:
         if logger:
-            logger.log("ERROR", "Command not found", command=command)
+            logger.log("ERROR", "Command not found", command=safe_command)
         return None
+
+
+def _redact_command(
+    command: list[str],
+    sensitive_values: list[str] | None = None,
+) -> list[str]:
+    redacted = list(command)
+    sensitive_flags = {
+        "--token",
+        "--auth-token",
+        "--authtoken",
+        "authtoken",
+        "--password",
+        "--secret",
+    }
+    for index, arg in enumerate(redacted):
+        if arg.lower() in sensitive_flags and index + 1 < len(redacted):
+            redacted[index + 1] = "***REDACTED***"
+    if sensitive_values:
+        redacted = ["***REDACTED***" if part in sensitive_values else part for part in redacted]
+    return redacted
 
 
 def check_disk_space(path: str | os.PathLike[str], required_mb: int = 1000, logger=None) -> bool:

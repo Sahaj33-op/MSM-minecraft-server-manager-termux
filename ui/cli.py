@@ -99,6 +99,7 @@ def create_services():
     config_manager = ConfigManager(CONFIG_FILE, logger)
     db_manager = DatabaseManager(DATABASE_FILE)
     runtime = RuntimeManager(config_manager, db_manager, logger)
+    runtime.resume_running_servers()
     return logger, config_manager, db_manager, runtime
 
 
@@ -230,6 +231,7 @@ def ngrok_setup_wizard(
                 logger=logger,
                 check=False,
                 capture_output=True,
+                sensitive_values=[authtoken],
             )
             if result and result.returncode == 0:
                 logger.log("SUCCESS", "Stored ngrok authtoken successfully.")
@@ -461,31 +463,7 @@ def create_new_server(config_manager: ConfigManager, logger) -> None:
     if sanitized_name in config.get("servers", {}):
         logger.log("ERROR", f"Server '{sanitized_name}' already exists.")
         return
-    config["servers"][sanitized_name] = {
-        "server_flavor": None,
-        "server_version": None,
-        "eula_accepted": True,
-        "ram_mb": 2048,
-        "auto_restart": False,
-        "backup_settings": {"enabled": False, "interval_hours": 6},
-        "tunnel": {
-            "enabled": False,
-            "provider": "ngrok",
-            "binary_path": "ngrok",
-            "autostart": False,
-        },
-        "rcon": {"enabled": False, "host": "127.0.0.1", "port": 25575, "password": ""},
-        "server_settings": {
-            "motd": f"{sanitized_name} Server",
-            "port": 25565,
-            "max-players": 20,
-            "online-mode": "true",
-            "enable-rcon": "false",
-            "rcon.port": 25575,
-        },
-    }
-    config["current_server"] = sanitized_name
-    config_manager.save(config)
+    config_manager.ensure_server(sanitized_name)
     get_server_dir(sanitized_name).mkdir(parents=True, exist_ok=True)
     logger.log("SUCCESS", f"Created server '{sanitized_name}'.")
 
