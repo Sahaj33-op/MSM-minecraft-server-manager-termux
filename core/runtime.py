@@ -3,8 +3,17 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
 from core.server import ServerInstance
+from utils.system import (
+    get_screen_name,
+    get_server_dir,
+    is_pid_running,
+    read_pid_file,
+    remove_file,
+    screen_session_exists,
+)
 
 
 class RuntimeManager:
@@ -37,10 +46,19 @@ class RuntimeManager:
             if instance.is_running():
                 instance.resume_background_services()
 
+    def is_server_running(self, server_name: str) -> bool:
+        pid_file = Path(get_server_dir(server_name)) / ".msm.pid"
+        pid = read_pid_file(pid_file)
+        if pid and is_pid_running(pid):
+            return True
+        if pid:
+            remove_file(pid_file)
+        return screen_session_exists(get_screen_name(server_name), logger=self.logger)
+
     def running_servers(self) -> list[str]:
         config = self.config_manager.load()
         return [
             server_name
             for server_name in config.get("servers", {})
-            if self.get_instance(server_name).is_running()
+            if self.is_server_running(server_name)
         ]

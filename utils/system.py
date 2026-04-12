@@ -74,11 +74,18 @@ def run_command(
         )
     except subprocess.CalledProcessError as exc:
         if logger:
-            logger.log("ERROR", "Command failed", command=safe_command, returncode=exc.returncode)
+            logger.log(
+                "ERROR",
+                "Command failed",
+                command=safe_command,
+                returncode=exc.returncode,
+            )
         return None
     except subprocess.TimeoutExpired:
         if logger:
-            logger.log("ERROR", "Command timed out", command=safe_command, timeout=timeout)
+            logger.log(
+                "ERROR", "Command timed out", command=safe_command, timeout=timeout
+            )
         return None
     except FileNotFoundError:
         if logger:
@@ -103,11 +110,15 @@ def _redact_command(
         if arg.lower() in sensitive_flags and index + 1 < len(redacted):
             redacted[index + 1] = "***REDACTED***"
     if sensitive_values:
-        redacted = ["***REDACTED***" if part in sensitive_values else part for part in redacted]
+        redacted = [
+            "***REDACTED***" if part in sensitive_values else part for part in redacted
+        ]
     return redacted
 
 
-def check_disk_space(path: str | os.PathLike[str], required_mb: int = 1000, logger=None) -> bool:
+def check_disk_space(
+    path: str | os.PathLike[str], required_mb: int = 1000, logger=None
+) -> bool:
     try:
         free_mb = shutil.disk_usage(path).free // (1024 * 1024)
     except OSError as exc:
@@ -136,7 +147,11 @@ def get_system_info() -> dict[str, Any]:
         cpu_usage = psutil.cpu_percent(interval=None)
         max_safe_ram_mb = min(
             int(total_ram_mb * MAX_RAM_PERCENTAGE / 100),
-            available_ram_mb - 512 if available_ram_mb > 1024 else available_ram_mb - 256,
+            (
+                available_ram_mb - 512
+                if available_ram_mb > 1024
+                else available_ram_mb - 256
+            ),
         )
         return {
             "total_ram_mb": total_ram_mb,
@@ -180,11 +195,15 @@ def build_screen_launch_command(
     startup_command: list[str],
     pid_file: str | os.PathLike[str],
 ) -> list[str]:
-    shell_script = f"echo $$ > {shlex.quote(str(pid_file))}; exec {shlex.join(startup_command)}"
+    shell_script = (
+        f"echo $$ > {shlex.quote(str(pid_file))}; exec {shlex.join(startup_command)}"
+    )
     return ["screen", "-dmS", screen_name, "sh", "-c", shell_script]
 
 
-def wait_for_pid_file(pid_file: str | os.PathLike[str], timeout_seconds: int = 10) -> int | None:
+def wait_for_pid_file(
+    pid_file: str | os.PathLike[str], timeout_seconds: int = 10
+) -> int | None:
     deadline = time.time() + timeout_seconds
     pid_path = Path(pid_file)
     while time.time() < deadline:
@@ -274,7 +293,9 @@ def get_required_java(version: str | None) -> str:
     return "17"
 
 
-def get_java_path(mc_version: str | None, config: dict[str, Any], logger=None) -> str | None:
+def get_java_path(
+    mc_version: str | None, config: dict[str, Any], logger=None
+) -> str | None:
     required_version = get_required_java(mc_version)
     candidates: list[str] = []
 

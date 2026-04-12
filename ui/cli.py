@@ -209,16 +209,24 @@ def ngrok_setup_wizard(
     print(" - Your ngrok account must be configured with an authtoken.")
     print(" - TCP endpoints may require billing details on ngrok.")
     if running_on_termux():
-        print(" - If you installed ngrok through a wrapper, set the binary path to that wrapper.")
+        print(
+            " - If you installed ngrok through a wrapper, set the binary path to that wrapper."
+        )
 
-    binary_path = input(f"\nNgrok binary path [{default_binary}]: ").strip() or default_binary
+    binary_path = (
+        input(f"\nNgrok binary path [{default_binary}]: ").strip() or default_binary
+    )
     resolved_binary = resolve_tunnel_binary(binary_path)
     if resolved_binary:
         logger.log("INFO", f"Using ngrok binary at {resolved_binary}")
     else:
-        logger.log("WARNING", f"Ngrok binary '{binary_path}' was not found on this device.")
+        logger.log(
+            "WARNING", f"Ngrok binary '{binary_path}' was not found on this device."
+        )
 
-    authtoken = input("Ngrok authtoken (leave blank to keep the existing config): ").strip()
+    authtoken = input(
+        "Ngrok authtoken (leave blank to keep the existing config): "
+    ).strip()
     if authtoken:
         if not resolved_binary:
             logger.log(
@@ -232,6 +240,7 @@ def ngrok_setup_wizard(
                 check=False,
                 capture_output=True,
                 sensitive_values=[authtoken],
+                log_command=False,
             )
             if result and result.returncode == 0:
                 logger.log("SUCCESS", "Stored ngrok authtoken successfully.")
@@ -239,9 +248,13 @@ def ngrok_setup_wizard(
                 stderr = ""
                 if result:
                     stderr = (result.stderr or result.stdout or "").strip()
-                logger.log("ERROR", f"Failed to store ngrok authtoken. {stderr}".strip())
+                logger.log(
+                    "ERROR", f"Failed to store ngrok authtoken. {stderr}".strip()
+                )
 
-    enable_tunnel = input("Enable ngrok for this server? (Y/n): ").strip().lower() != "n"
+    enable_tunnel = (
+        input("Enable ngrok for this server? (Y/n): ").strip().lower() != "n"
+    )
     save_tunnel_config(
         instance,
         config_manager,
@@ -279,7 +292,9 @@ def playit_setup_wizard(
     print(" - MSM uses `claim generate`, `claim url`, and `claim exchange` for setup.")
     print(" - MSM uses `playit-cli start` for the managed background agent.")
     print(" - You still need to link the agent to your playit account.")
-    print(f" - Create a playit TCP tunnel that forwards to 127.0.0.1:{instance.get_server_port()}.")
+    print(
+        f" - Create a playit TCP tunnel that forwards to 127.0.0.1:{instance.get_server_port()}."
+    )
     if running_on_termux():
         print("\nInstall playit on Termux:")
         print(" pkg update && pkg upgrade")
@@ -288,17 +303,22 @@ def playit_setup_wizard(
         print(" ln -s $PREFIX/bin/playit-cli $PREFIX/bin/playit")
         print(" MSM does not need tmux when it manages playit for this server.")
 
-    binary_path = input(f"\nPlayit binary path [{current_binary}]: ").strip() or str(current_binary)
+    binary_path = input(f"\nPlayit binary path [{current_binary}]: ").strip() or str(
+        current_binary
+    )
     resolved_binary = resolve_tunnel_binary(binary_path)
     if resolved_binary:
         logger.log("INFO", f"Using playit binary at {resolved_binary}")
     else:
-        logger.log("WARNING", f"Playit binary '{binary_path}' was not found on this device.")
+        logger.log(
+            "WARNING", f"Playit binary '{binary_path}' was not found on this device."
+        )
 
     if resolved_binary:
-        run_guided_claim = input(
-            "Run the guided playit claim flow now? (Y/n): "
-        ).strip().lower() != "n"
+        run_guided_claim = (
+            input("Run the guided playit claim flow now? (Y/n): ").strip().lower()
+            != "n"
+        )
         if run_guided_claim:
             claim_generate = run_command(
                 build_playit_claim_generate_command(resolved_binary),
@@ -309,9 +329,7 @@ def playit_setup_wizard(
             )
             generate_output = ""
             if claim_generate:
-                generate_output = (
-                    f"{claim_generate.stdout or ''}\n{claim_generate.stderr or ''}".strip()
-                )
+                generate_output = f"{claim_generate.stdout or ''}\n{claim_generate.stderr or ''}".strip()
             claim_code = extract_last_non_empty_line(generate_output)
             if not claim_generate or claim_generate.returncode != 0 or not claim_code:
                 logger.log(
@@ -331,12 +349,10 @@ def playit_setup_wizard(
                 )
                 url_output = ""
                 if claim_url_result:
-                    url_output = (
-                        f"{claim_url_result.stdout or ''}\n{claim_url_result.stderr or ''}".strip()
-                    )
-                claim_url = extract_playit_claim_url(url_output) or extract_last_non_empty_line(
+                    url_output = f"{claim_url_result.stdout or ''}\n{claim_url_result.stderr or ''}".strip()
+                claim_url = extract_playit_claim_url(
                     url_output
-                )
+                ) or extract_last_non_empty_line(url_output)
                 if claim_url:
                     logger.log("INFO", f"Open this playit claim URL: {claim_url}")
                     print()
@@ -370,9 +386,15 @@ def playit_setup_wizard(
                     if not stored_secret:
                         fallback_secret = extract_last_non_empty_line(exchange_output)
                         if fallback_secret:
-                            write_text_file(instance.playit_secret_file, fallback_secret)
+                            write_text_file(
+                                instance.playit_secret_file, fallback_secret
+                            )
                             stored_secret = fallback_secret
-                    if exchange_result and exchange_result.returncode == 0 and stored_secret:
+                    if (
+                        exchange_result
+                        and exchange_result.returncode == 0
+                        and stored_secret
+                    ):
                         logger.log(
                             "SUCCESS",
                             (
@@ -388,7 +410,9 @@ def playit_setup_wizard(
                         if exchange_output:
                             logger.log("INFO", exchange_output)
 
-    enable_tunnel = input("Enable playit for this server? (Y/n): ").strip().lower() != "n"
+    enable_tunnel = (
+        input("Enable playit for this server? (Y/n): ").strip().lower() != "n"
+    )
     save_tunnel_config(
         instance,
         config_manager,
@@ -531,7 +555,9 @@ def select_server_version(flavor: str, logger) -> tuple[str | None, dict | None]
         for index, version in enumerate(page_versions, start=1):
             marker = " [snapshot]" if versions_data[version].get("is_snapshot") else ""
             print(f" {index}. {version}{marker}")
-        print("\n n = next page | p = previous page | s = toggle snapshots | 0 = cancel")
+        print(
+            "\n n = next page | p = previous page | s = toggle snapshots | 0 = cancel"
+        )
         choice = input(f"{C.BOLD}Choose version: {C.RESET}").strip().lower()
         if choice == "0":
             return None, None
@@ -558,7 +584,9 @@ def select_server_version(flavor: str, logger) -> tuple[str | None, dict | None]
         return version, versions_data[version]
 
 
-def install_server(runtime: RuntimeManager, config_manager: ConfigManager, logger) -> None:
+def install_server(
+    runtime: RuntimeManager, config_manager: ConfigManager, logger
+) -> None:
     config = ensure_current_server(config_manager)
     current_server = config.get("current_server")
     if not current_server:
@@ -584,14 +612,18 @@ def install_server(runtime: RuntimeManager, config_manager: ConfigManager, logge
         server_config = saved_config["servers"][current_server]
         server_config["server_flavor"] = flavor
         server_config["server_version"] = version
-        server_config["server_settings"]["port"] = SERVER_FLAVORS[flavor]["default_port"]
+        server_config["server_settings"]["port"] = SERVER_FLAVORS[flavor][
+            "default_port"
+        ]
 
     config_manager.mutate(updater)
     instance.apply_server_files()
     logger.log("SUCCESS", f"Installed {artifact.name} for '{current_server}'.")
 
 
-def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, logger) -> None:
+def configure_server(
+    runtime: RuntimeManager, config_manager: ConfigManager, logger
+) -> None:
     config = ensure_current_server(config_manager)
     current_server = config.get("current_server")
     if not current_server:
@@ -611,7 +643,9 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
         print(f" 5. Max players: {server_config['server_settings']['max-players']}")
         print(f" 6. Online mode: {server_config['server_settings']['online-mode']}")
         print(f" 7. Scheduled backups: {server_config['backup_settings']['enabled']}")
-        print(f" 8. Backup interval hours: {server_config['backup_settings']['interval_hours']}")
+        print(
+            f" 8. Backup interval hours: {server_config['backup_settings']['interval_hours']}"
+        )
         print(f" 9. Tunnel enabled: {server_config['tunnel']['enabled']}")
         print(f"10. Tunnel provider: {server_config['tunnel']['provider']}")
         print(f"11. Tunnel binary: {server_config['tunnel']['binary_path']}")
@@ -634,9 +668,12 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
                 value = int(input("Server port: ").strip())
 
                 def updater(saved_config: dict) -> None:
-                    saved_config["servers"][current_server]["server_settings"]["port"] = value
+                    saved_config["servers"][current_server]["server_settings"][
+                        "port"
+                    ] = value
 
             elif choice == "3":
+
                 def updater(saved_config: dict) -> None:
                     server = saved_config["servers"][current_server]
                     server["auto_restart"] = not server["auto_restart"]
@@ -645,7 +682,9 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
                 value = input("MOTD: ").strip()
 
                 def updater(saved_config: dict) -> None:
-                    saved_config["servers"][current_server]["server_settings"]["motd"] = value
+                    saved_config["servers"][current_server]["server_settings"][
+                        "motd"
+                    ] = value
 
             elif choice == "5":
                 value = int(input("Max players: ").strip())
@@ -656,6 +695,7 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
                     ] = value
 
             elif choice == "6":
+
                 def updater(saved_config: dict) -> None:
                     server = saved_config["servers"][current_server]
                     current_value = str(
@@ -666,10 +706,13 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
                     )
 
             elif choice == "7":
+
                 def updater(saved_config: dict) -> None:
                     server = saved_config["servers"][current_server]
                     backup_settings = server.setdefault("backup_settings", {})
-                    backup_settings["enabled"] = not backup_settings.get("enabled", False)
+                    backup_settings["enabled"] = not backup_settings.get(
+                        "enabled", False
+                    )
 
             elif choice == "8":
                 value = float(input("Backup interval in hours: ").strip())
@@ -680,6 +723,7 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
                     ] = value
 
             elif choice == "9":
+
                 def updater(saved_config: dict) -> None:
                     server = saved_config["servers"][current_server]
                     tunnel = server.setdefault("tunnel", {})
@@ -691,24 +735,34 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
                 value = (
                     input(
                         f"Tunnel provider ({provider_options}) [{current_provider}]: "
-                    ).strip().lower()
+                    )
+                    .strip()
+                    .lower()
                     or current_provider
                 )
                 if value not in SUPPORTED_TUNNEL_PROVIDERS:
-                    logger.log("ERROR", f"Tunnel provider must be one of: {provider_options}")
+                    logger.log(
+                        "ERROR", f"Tunnel provider must be one of: {provider_options}"
+                    )
                     pause()
                     continue
 
                 def updater(saved_config: dict) -> None:
-                    tunnel = saved_config["servers"][current_server].setdefault("tunnel", {})
+                    tunnel = saved_config["servers"][current_server].setdefault(
+                        "tunnel", {}
+                    )
                     previous_provider = tunnel.get("provider", "ngrok")
-                    previous_binary = tunnel.get("binary_path", DEFAULT_TUNNEL_BINARIES["ngrok"])
+                    previous_binary = tunnel.get(
+                        "binary_path", DEFAULT_TUNNEL_BINARIES["ngrok"]
+                    )
                     tunnel["provider"] = value
                     if previous_binary == DEFAULT_TUNNEL_BINARIES.get(
                         previous_provider,
                         previous_binary,
                     ):
-                        tunnel["binary_path"] = DEFAULT_TUNNEL_BINARIES.get(value, value)
+                        tunnel["binary_path"] = DEFAULT_TUNNEL_BINARIES.get(
+                            value, value
+                        )
 
             elif choice == "11":
                 current_provider = server_config["tunnel"].get("provider", "ngrok")
@@ -722,13 +776,16 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
                 )
 
                 def updater(saved_config: dict) -> None:
-                    saved_config["servers"][current_server]["tunnel"]["binary_path"] = value
+                    saved_config["servers"][current_server]["tunnel"][
+                        "binary_path"
+                    ] = value
 
             elif choice == "12":
                 tunnel_setup_wizard(runtime, config_manager, current_server, logger)
                 continue
 
             elif choice == "13":
+
                 def updater(saved_config: dict) -> None:
                     server = saved_config["servers"][current_server]
                     rcon = server.setdefault("rcon", {})
@@ -763,7 +820,9 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
             pause()
 
 
-def edit_server_files(runtime: RuntimeManager, config_manager: ConfigManager, logger) -> None:
+def edit_server_files(
+    runtime: RuntimeManager, config_manager: ConfigManager, logger
+) -> None:
     config = ensure_current_server(config_manager)
     current_server = config.get("current_server")
     if not current_server:
@@ -850,7 +909,9 @@ def choose_backup(instance, logger) -> Path | None:
     return backups[selection]
 
 
-def world_manager(runtime: RuntimeManager, config_manager: ConfigManager, logger) -> None:
+def world_manager(
+    runtime: RuntimeManager, config_manager: ConfigManager, logger
+) -> None:
     config = ensure_current_server(config_manager)
     current_server = config.get("current_server")
     if not current_server:
@@ -872,7 +933,9 @@ def world_manager(runtime: RuntimeManager, config_manager: ConfigManager, logger
             return
         if choice == "1":
             try:
-                backup_path = run_with_spinner("Creating backup", instance.create_backup)
+                backup_path = run_with_spinner(
+                    "Creating backup", instance.create_backup
+                )
                 logger.log("SUCCESS", f"Backup saved to {backup_path}")
             except Exception as exc:
                 logger.log("ERROR", f"Backup failed: {exc}")
@@ -900,7 +963,9 @@ def world_manager(runtime: RuntimeManager, config_manager: ConfigManager, logger
                 pause()
                 continue
             try:
-                run_with_spinner("Restoring backup", instance.restore_backup, backup_path.name)
+                run_with_spinner(
+                    "Restoring backup", instance.restore_backup, backup_path.name
+                )
             except Exception as exc:
                 logger.log("ERROR", f"Restore failed: {exc}")
             pause()
@@ -948,7 +1013,9 @@ def show_statistics(
     pause()
 
 
-def show_console(runtime: RuntimeManager, config_manager: ConfigManager, logger) -> None:
+def show_console(
+    runtime: RuntimeManager, config_manager: ConfigManager, logger
+) -> None:
     config = ensure_current_server(config_manager)
     current_server = config.get("current_server")
     if not current_server:
@@ -967,7 +1034,9 @@ def show_console(runtime: RuntimeManager, config_manager: ConfigManager, logger)
         pause()
 
 
-def send_command_menu(runtime: RuntimeManager, config_manager: ConfigManager, logger) -> None:
+def send_command_menu(
+    runtime: RuntimeManager, config_manager: ConfigManager, logger
+) -> None:
     config = ensure_current_server(config_manager)
     current_server = config.get("current_server")
     if not current_server:
@@ -1073,9 +1142,13 @@ def main() -> None:
                 pause()
             elif choice == "0":
                 if runtime.running_servers():
-                    leave_running = input(
-                        "Leave running servers active in screen after exit? (Y/n): "
-                    ).strip().lower()
+                    leave_running = (
+                        input(
+                            "Leave running servers active in screen after exit? (Y/n): "
+                        )
+                        .strip()
+                        .lower()
+                    )
                     if leave_running == "n":
                         for server_name in runtime.running_servers():
                             runtime.get_instance(server_name).stop()
