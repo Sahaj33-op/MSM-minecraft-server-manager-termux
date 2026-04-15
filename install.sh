@@ -29,7 +29,7 @@ if command -v pkg >/dev/null 2>&1; then
     log_info "Updating Termux packages..."
     pkg update
     DEBIAN_FRONTEND=noninteractive
-    pkg upgrade -y -o
+    apt-get upgrade -y -o
     Dpkg::Options::="--force-confdef" -o
     Dpkg::Options::="--force-confold"
 
