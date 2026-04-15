@@ -28,10 +28,7 @@ log_info "Starting MSM installation..."
 if command -v pkg >/dev/null 2>&1; then
     log_info "Updating Termux packages..."
     pkg update
-    DEBIAN_FRONTEND=noninteractive
-    apt-get upgrade -y -o
-    Dpkg::Options::="--force-confdef" -o
-    Dpkg::Options::="--force-confold"
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 
     log_info "Installing system dependencies..."
     pkg install python git screen openjdk-17 openjdk-21 php python-psutil -y
