@@ -310,7 +310,9 @@ def playit_setup_wizard(
                 generate_output = (
                     f"{claim_generate.stdout or ''}\n{claim_generate.stderr or ''}".strip()
                 )
-            claim_code = extract_last_non_empty_line(generate_output)
+            raw_claim_line = extract_last_non_empty_line(generate_output)
+            claim_code = raw_claim_line.split()[-1] if raw_claim_line else None
+        
             if not claim_generate or claim_generate.returncode != 0 or not claim_code:
                 logger.log(
                     "ERROR",
@@ -366,7 +368,8 @@ def playit_setup_wizard(
                         exchange_output = exchange_output.strip()
                     stored_secret = read_text_file(instance.playit_secret_file)
                     if not stored_secret:
-                        fallback_secret = extract_last_non_empty_line(exchange_output)
+                        raw_secret_line = extract_last_non_empty_line(exchange_output)
+                        fallback_secret = raw_secret_line.split()[-1] if raw_secret_line else None
                         if fallback_secret:
                             write_text_file(instance.playit_secret_file, fallback_secret)
                             stored_secret = fallback_secret
