@@ -32,6 +32,17 @@ if command -v pkg >/dev/null 2>&1; then
 
     log_info "Installing system dependencies..."
     pkg install python git screen openjdk-17 openjdk-21 php python-psutil -y
+
+    log_info "Installing playit tunnel support via tur-repo..."
+    if ! pkg list-installed tur-repo >/dev/null 2>&1; then
+        pkg install tur-repo -y
+    fi
+    if ! command -v playit >/dev/null 2>&1; then
+        pkg install playit -y || log_warning "playit installation failed; install manually later."
+    fi
+    if command -v playit >/dev/null 2>&1 && ! command -v playit-cli >/dev/null 2>&1; then
+        ln -sf "$(command -v playit)" "$PREFIX/bin/playit-cli" 2>/dev/null || true
+    fi
 else
     log_warning "pkg was not found. Install python3, git, screen, Java, and PHP manually."
 fi

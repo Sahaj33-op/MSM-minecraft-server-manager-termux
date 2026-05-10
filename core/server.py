@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import shutil
+
 import subprocess
 import threading
 import time
@@ -19,15 +19,33 @@ from core.constants import (
     DEFAULT_TUNNEL_BINARIES,
     EULA_FILE,
     MONITOR_INTERVAL,
+    NGROK_ENDPOINT_FILE_NAME,
     PID_FILE_NAME,
+    PLAYIT_ENDPOINT_FILE_NAME,
     PLAYIT_SECRET_FILE_NAME,
     SERVER_FLAVORS,
     SERVER_PROPERTIES_FILE,
     SESSION_FILE_NAME,
     TUNNEL_PID_FILE_NAME,
+    TUNNEL_STATUS_BINARY_MISSING,
+    TUNNEL_STATUS_FAILED,
+    TUNNEL_STATUS_MAPPING_MISSING,
+    TUNNEL_STATUS_READY,
+    TUNNEL_STATUS_SECRET_MISSING,
 )
 from utils.archive import create_backup_archive, discover_world_directories, safe_extract_zip
-from utils.network import download_server_binary, get_ngrok_public_url
+from utils.network import download_server_binary
+from utils.ngrok import (
+    inspect_ngrok_status,
+    start_ngrok_agent,
+    stop_ngrok_agent,
+)
+from utils.playit import (
+    build_playit_mapping_hint,
+    inspect_playit_status,
+    start_playit_agent,
+    stop_playit_agent,
+)
 from utils.properties import load_properties, write_properties
 from utils.rcon import RCONClient, RCONError
 from utils.system import (
@@ -46,11 +64,6 @@ from utils.system import (
     screen_session_exists,
     wait_for_pid_file,
     write_text_file,
-)
-from utils.tunnels import (
-    build_playit_start_command,
-    extract_playit_claim_url,
-    extract_playit_public_endpoint,
 )
 
 
@@ -97,6 +110,14 @@ class ServerInstance:
     @property
     def playit_secret_file(self) -> Path:
         return self.server_dir / PLAYIT_SECRET_FILE_NAME
+
+    @property
+    def playit_endpoint_file(self) -> Path:
+        return self.server_dir / PLAYIT_ENDPOINT_FILE_NAME
+
+    @property
+    def ngrok_endpoint_file(self) -> Path:
+        return self.server_dir / NGROK_ENDPOINT_FILE_NAME
 
     @property
     def screen_name(self) -> str:
@@ -150,49 +171,49 @@ class ServerInstance:
         _config, server_config = self.refresh_config()
         tunnel_config = server_config.get("tunnel", {})
         tunnel_enabled = bool(tunnel_config.get("enabled"))
-        tunnel_provider = tunnel_config.get("provider", "ngrok")
+        tunnel_provider = tunnel_config.get("provider", "playit")
         tunnel_url = None
         tunnel_status = "disabled"
         tunnel_setup_url = None
 
         if tunnel_enabled:
-            if tunnel_provider == "playit" and not self.playit_secret_file.exists():
-                tunnel_status = "playit is enabled but not linked; run the tunnel setup wizard"
-                return {
-                    "port": port,
-                    "loopback_endpoint": loopback_endpoint,
-                    "lan_endpoints": lan_endpoints,
-                    "tunnel_enabled": tunnel_enabled,
-                    "tunnel_provider": tunnel_provider,
-                    "tunnel_url": tunnel_url,
-                    "tunnel_status": tunnel_status,
-                    "tunnel_setup_url": tunnel_setup_url,
-                }
-            tunnel_pid = read_pid_file(self.tunnel_pid_file)
-            if tunnel_pid and is_pid_running(tunnel_pid):
-                if tunnel_provider == "ngrok":
-                    tunnel_url = get_ngrok_public_url(
-                        port,
-                        logger=self.logger,
-                        timeout=2,
+            if tunnel_provider == "playit":
+                if not self.playit_secret_file.exists():
+                    tunnel_status = (
+                        "playit is enabled but not linked; "
+                        "run the tunnel setup wizard"
                     )
-                    tunnel_status = tunnel_url or "ngrok is running, waiting for public URL"
-                elif tunnel_provider == "playit":
-                    log_tail = self._read_tunnel_log_tail(provider="playit", line_count=25) or ""
-                    tunnel_url = extract_playit_public_endpoint(log_tail)
-                    tunnel_setup_url = extract_playit_claim_url(log_tail)
+                else:
+                    status = inspect_playit_status(self.server_dir)
+                    tunnel_url = status.endpoint
+                    tunnel_setup_url = status.claim_url
                     if tunnel_url:
                         tunnel_status = tunnel_url
-                    elif tunnel_setup_url:
+                    elif status.claim_url:
                         tunnel_status = "playit needs account linking"
-                    else:
-                        tunnel_status = (
-                            "playit agent is running; finish tunnel mapping in the playit dashboard"
+                    elif status.state == "mapping_missing":
+                        protocol = tunnel_config.get("protocol", "tcp")
+                        local_host = tunnel_config.get(
+                            "local_host", "127.0.0.1"
                         )
-                else:
-                    tunnel_status = f"{tunnel_provider} is not supported yet"
+                        local_port = tunnel_config.get(
+                            "local_port"
+                        ) or port
+                        tunnel_status = build_playit_mapping_hint(
+                            protocol, local_host, int(local_port)
+                        )
+                    else:
+                        tunnel_status = status.message
+            elif tunnel_provider == "ngrok":
+                status = inspect_ngrok_status(
+                    self.server_dir, port, logger=self.logger
+                )
+                tunnel_url = status.endpoint
+                tunnel_status = (
+                    tunnel_url or status.message
+                )
             else:
-                tunnel_status = f"enabled, but {tunnel_provider} is not running"
+                tunnel_status = f"{tunnel_provider} is not supported yet"
 
         return {
             "port": port,
@@ -464,21 +485,32 @@ class ServerInstance:
         remove_file(self.pid_file)
 
     def stop_tunnel(self) -> None:
-        pid = read_pid_file(self.tunnel_pid_file)
-        if self.tunnel_process and self.tunnel_process.poll() is None:
-            self.tunnel_process.terminate()
-            try:
-                self.tunnel_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.tunnel_process.kill()
-        elif pid and is_pid_running(pid):
-            try:
-                psutil.Process(pid).terminate()
-            except psutil.Error:
-                pass
-        remove_file(self.tunnel_pid_file)
+        _config, server_config = self.refresh_config()
+        provider = server_config.get("tunnel", {}).get("provider", "playit")
+        if provider == "playit":
+            stop_playit_agent(self.server_dir)
+        elif provider == "ngrok":
+            stop_ngrok_agent(self.server_dir)
+        else:
+            # Fallback: terminate via existing process handle or PID file.
+            pid = read_pid_file(self.tunnel_pid_file)
+            if self.tunnel_process and self.tunnel_process.poll() is None:
+                self.tunnel_process.terminate()
+                try:
+                    self.tunnel_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.tunnel_process.kill()
+            elif pid and is_pid_running(pid):
+                try:
+                    psutil.Process(pid).terminate()
+                except psutil.Error:
+                    pass
+            remove_file(self.tunnel_pid_file)
         if self.tunnel_log_handle:
-            self.tunnel_log_handle.close()
+            try:
+                self.tunnel_log_handle.close()
+            except OSError:
+                pass
             self.tunnel_log_handle = None
         self.tunnel_process = None
 
@@ -692,106 +724,106 @@ class ServerInstance:
         existing_pid = read_pid_file(self.tunnel_pid_file)
         if existing_pid and is_pid_running(existing_pid):
             return
-        provider = tunnel_config.get("provider", "ngrok")
-        binary = tunnel_config.get("binary_path") or _config.get("tunnel_defaults", {}).get(
+        provider = tunnel_config.get("provider", "playit")
+        binary = tunnel_config.get("binary_path") or _config.get(
+            "tunnel_defaults", {}
+        ).get(
             "binary_path",
             DEFAULT_TUNNEL_BINARIES.get(provider, provider),
         )
-        resolved_binary = shutil.which(binary) or binary
-        if shutil.which(resolved_binary) is None and not Path(resolved_binary).exists():
-            self.logger.log(
-                "WARNING",
-                f"{provider.capitalize()} binary '{binary}' was not found. Tunnel startup skipped.",
-            )
-            return
-        if provider == "playit" and not self.playit_secret_file.exists():
-            self.logger.log(
-                "WARNING",
-                (
-                    f"Playit secret file was not found for {self.server_name}. "
-                    "Run the tunnel setup wizard before starting playit."
-                ),
-            )
-            return
-        port = int(server_config.get("server_settings", {}).get("port", 25565))
-        log_path = self.get_tunnel_log_path(provider)
-        self.tunnel_log_handle = log_path.open("a", encoding="utf-8")
-        if provider == "ngrok":
-            tunnel_command = [resolved_binary, "tcp", str(port), "--log", "stdout"]
-        elif provider == "playit":
-            tunnel_command = build_playit_start_command(
-                resolved_binary,
-                secret_path=self.playit_secret_file,
-            )
-        else:
-            self.logger.log("WARNING", f"Tunnel provider '{provider}' is not supported.")
-            self.tunnel_log_handle.close()
-            self.tunnel_log_handle = None
-            return
-        self.tunnel_process = subprocess.Popen(
-            tunnel_command,
-            cwd=self.server_dir,
-            stdout=self.tunnel_log_handle,
-            stderr=subprocess.STDOUT,
-            text=True,
+        protocol = tunnel_config.get("protocol", "tcp")
+        local_host = tunnel_config.get("local_host", "127.0.0.1")
+        port = int(
+            server_config.get("server_settings", {}).get("port", 25565)
         )
-        write_text_file(self.tunnel_pid_file, str(self.tunnel_process.pid))
-        deadline = time.monotonic() + 1.0
-        exit_code = self.tunnel_process.poll()
-        while exit_code is None and time.monotonic() < deadline:
-            time.sleep(0.1)
-            exit_code = self.tunnel_process.poll()
-        if exit_code is not None:
-            remove_file(self.tunnel_pid_file)
-            if self.tunnel_log_handle:
-                self.tunnel_log_handle.flush()
-            log_tail = self._read_tunnel_log_tail(provider=provider)
-            self.logger.log(
-                "ERROR",
-                f"{provider.capitalize()} exited immediately for {self.server_name}.",
-                exit_code=exit_code,
-            )
-            if log_tail:
-                self.logger.log("INFO", f"{provider.capitalize()} log tail: {log_tail}")
+        local_port = tunnel_config.get("local_port") or port
+        flavor = server_config.get("server_flavor")
+
+        # Protocol warnings for PocketMine/Bedrock.
+        if flavor == "pocketmine":
             if provider == "ngrok":
                 self.logger.log(
-                    "INFO",
-                    "Check your ngrok authtoken, account plan, binary path, and tunnel log.",
+                    "WARNING",
+                    (
+                        "PocketMine/Bedrock requires UDP. "
+                        "Ngrok is TCP-only in this implementation. "
+                        "Consider using Playit.gg instead."
+                    ),
                 )
-            return
-        if provider == "ngrok":
-            public_url = get_ngrok_public_url(port, logger=self.logger)
-            if public_url:
+            elif provider == "playit" and protocol != "udp":
+                self.logger.log(
+                    "WARNING",
+                    (
+                        "PocketMine/Bedrock requires UDP. "
+                        "Set tunnel protocol to 'udp' in server configuration."
+                    ),
+                )
+
+        if provider == "playit":
+            status = start_playit_agent(
+                self.server_dir,
+                binary,
+                self.playit_secret_file,
+                self.logger,
+            )
+            if status.state == TUNNEL_STATUS_READY:
                 self.logger.log(
                     "SUCCESS",
-                    f"Ngrok tunnel ready for {self.server_name}: {public_url}",
+                    f"Playit tunnel ready for {self.server_name}: {status.endpoint}",
                 )
-                return
-            self.logger.log(
-                "INFO",
-                (
-                    f"Ngrok process started for {self.server_name}. "
-                    "Check http://127.0.0.1:4040 for status."
-                ),
-            )
+            elif status.claim_url:
+                self.logger.log(
+                    "INFO",
+                    f"Link this device in your browser: {status.claim_url}",
+                )
+            elif status.state == TUNNEL_STATUS_MAPPING_MISSING:
+                hint = build_playit_mapping_hint(
+                    protocol, local_host, int(local_port)
+                )
+                self.logger.log("INFO", hint)
+            elif status.state in (
+                TUNNEL_STATUS_BINARY_MISSING,
+                TUNNEL_STATUS_SECRET_MISSING,
+                TUNNEL_STATUS_FAILED,
+            ):
+                self.logger.log("WARNING", status.message)
+            else:
+                self.logger.log("INFO", status.message)
             return
 
-        playit_info = self.get_connection_info()
-        if playit_info["tunnel_setup_url"]:
-            self.logger.log(
-                "INFO",
-                f"Link this device in your browser: {playit_info['tunnel_setup_url']}",
+        if provider == "ngrok":
+            if protocol != "tcp":
+                self.logger.log(
+                    "ERROR",
+                    (
+                        f"Ngrok supports TCP only in this implementation. "
+                        f"Cannot start with protocol '{protocol}'."
+                    ),
+                )
+                return
+            status = start_ngrok_agent(
+                self.server_dir,
+                binary,
+                int(local_port),
+                self.logger,
             )
-        if playit_info["tunnel_url"]:
-            self.logger.log(
-                "SUCCESS",
-                f"Playit tunnel ready for {self.server_name}: {playit_info['tunnel_url']}",
-            )
-        else:
-            self.logger.log(
-                "INFO",
-                (
-                    f"Playit agent started with `start` for {self.server_name}. "
-                    f"Create or update a playit tunnel that forwards to 127.0.0.1:{port}."
-                ),
-            )
+            if status.state == TUNNEL_STATUS_READY:
+                self.logger.log(
+                    "SUCCESS",
+                    f"Ngrok tunnel ready for {self.server_name}: {status.endpoint}",
+                )
+            elif status.state == TUNNEL_STATUS_FAILED:
+                self.logger.log("ERROR", status.message)
+                self.logger.log(
+                    "INFO",
+                    "Check your ngrok authtoken, account plan, "
+                    "binary path, and tunnel log.",
+                )
+            else:
+                self.logger.log("INFO", status.message)
+            return
+
+        self.logger.log(
+            "WARNING",
+            f"Tunnel provider '{provider}' is not supported.",
+        )

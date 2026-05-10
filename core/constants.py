@@ -48,10 +48,25 @@ SERVER_PROPERTIES_FILE = "server.properties"
 EULA_FILE = "eula.txt"
 
 SUPPORTED_TUNNEL_PROVIDERS = ("ngrok", "playit")
+SUPPORTED_TUNNEL_PROTOCOLS = ("tcp", "udp")
 DEFAULT_TUNNEL_BINARIES = {
     "ngrok": "ngrok",
     "playit": "playit-cli",
 }
+
+PLAYIT_ENDPOINT_FILE_NAME = ".msm.playit.endpoint"
+NGROK_ENDPOINT_FILE_NAME = ".msm.ngrok.endpoint"
+
+TUNNEL_STATUS_DISABLED = "disabled"
+TUNNEL_STATUS_BINARY_MISSING = "binary_missing"
+TUNNEL_STATUS_SECRET_MISSING = "secret_missing"
+TUNNEL_STATUS_AUTH_MISSING = "auth_missing"
+TUNNEL_STATUS_PROCESS_RUNNING = "process_running"
+TUNNEL_STATUS_READY = "ready"
+TUNNEL_STATUS_MAPPING_MISSING = "mapping_missing"
+TUNNEL_STATUS_FAILED = "failed"
+TUNNEL_STATUS_WRONG_PROTOCOL = "wrong_protocol"
+TUNNEL_STATUS_NOT_RUNNING = "not_running"
 
 _java_home = os.environ.get("JAVA_HOME")
 COMMON_JAVA_HOME_BASES = [

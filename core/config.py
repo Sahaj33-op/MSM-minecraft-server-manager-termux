@@ -15,9 +15,11 @@ DEFAULT_CONFIG = {
     "current_server": None,
     "java_homes": {},
     "tunnel_defaults": {
-        "provider": "ngrok",
-        "binary_path": "ngrok",
+        "provider": "playit",
+        "binary_path": "playit-cli",
         "autostart": False,
+        "protocol": "tcp",
+        "local_host": "127.0.0.1",
     },
     "servers": {},
 }
@@ -34,9 +36,13 @@ DEFAULT_SERVER_CONFIG = {
     },
     "tunnel": {
         "enabled": False,
-        "provider": "ngrok",
-        "binary_path": "ngrok",
+        "provider": "playit",
+        "binary_path": "playit-cli",
         "autostart": False,
+        "protocol": "tcp",
+        "local_host": "127.0.0.1",
+        "local_port": None,
+        "last_endpoint": None,
     },
     "rcon": {
         "enabled": False,
