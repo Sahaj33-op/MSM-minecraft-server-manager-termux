@@ -38,13 +38,11 @@ from utils.network import download_server_binary
 from utils.ngrok import (
     inspect_ngrok_status,
     start_ngrok_agent,
-    stop_ngrok_agent,
 )
 from utils.playit import (
     build_playit_mapping_hint,
     inspect_playit_status,
     start_playit_agent,
-    stop_playit_agent,
 )
 from utils.properties import load_properties, write_properties
 from utils.rcon import RCONClient, RCONError
@@ -487,27 +485,26 @@ class ServerInstance:
         remove_file(self.pid_file)
 
     def stop_tunnel(self) -> None:
-        _config, server_config = self.refresh_config()
-        provider = server_config.get("tunnel", {}).get("provider", "playit")
-        if provider == "playit":
-            stop_playit_agent(self.server_dir)
-        elif provider == "ngrok":
-            stop_ngrok_agent(self.server_dir)
-        else:
-            # Fallback: terminate via existing process handle or PID file.
-            pid = read_pid_file(self.tunnel_pid_file)
-            if self.tunnel_process and self.tunnel_process.poll() is None:
-                self.tunnel_process.terminate()
+        pid = read_pid_file(self.tunnel_pid_file)
+        if self.tunnel_process and self.tunnel_process.poll() is None:
+            self.tunnel_process.terminate()
+            try:
+                self.tunnel_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.tunnel_process.kill()
+        elif pid and is_pid_running(pid, expected_names=["playit", "ngrok"]):
+            try:
+                proc = psutil.Process(pid)
+                proc.terminate()
+                proc.wait(timeout=5)
+            except psutil.TimeoutExpired:
                 try:
-                    self.tunnel_process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    self.tunnel_process.kill()
-            elif pid and is_pid_running(pid):
-                try:
-                    psutil.Process(pid).terminate()
+                    proc.kill()
                 except psutil.Error:
                     pass
-            remove_file(self.tunnel_pid_file)
+            except psutil.Error:
+                pass
+        remove_file(self.tunnel_pid_file)
         if self.tunnel_log_handle:
             try:
                 self.tunnel_log_handle.close()
@@ -769,7 +766,7 @@ class ServerInstance:
                 self.playit_secret_file,
                 self.logger,
             )
-            self.tunnel_log_handle = log_handle
+            self.tunnel_log_handle = log_handle or self.tunnel_log_handle
             if status.state == TUNNEL_STATUS_READY:
                 self.logger.log(
                     "SUCCESS",
@@ -811,7 +808,7 @@ class ServerInstance:
                 int(local_port),
                 self.logger,
             )
-            self.tunnel_log_handle = log_handle
+            self.tunnel_log_handle = log_handle or self.tunnel_log_handle
             if status.state == TUNNEL_STATUS_READY:
                 self.logger.log(
                     "SUCCESS",

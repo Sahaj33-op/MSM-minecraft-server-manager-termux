@@ -218,22 +218,7 @@ def start_playit_agent(
     return status, log_handle
 
 
-def stop_playit_agent(server_dir: Path) -> None:
-    """Stop the running playit agent via PID file."""
-    pid = read_pid_file(server_dir / TUNNEL_PID_FILE_NAME)
-    if pid and is_pid_running(pid):
-        try:
-            proc = psutil.Process(pid)
-            proc.terminate()
-            proc.wait(timeout=5)
-        except psutil.TimeoutExpired:
-            try:
-                proc.kill()
-            except psutil.Error:
-                pass
-        except psutil.Error:
-            pass
-    remove_file(server_dir / TUNNEL_PID_FILE_NAME)
+
 
 
 # ---------------------------------------------------------------------------

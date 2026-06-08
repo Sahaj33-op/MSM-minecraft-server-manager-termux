@@ -28,7 +28,7 @@ from core.runtime import RuntimeManager
 from db.manager import DatabaseManager
 from ui.colors import C
 from utils.logging_utils import EnhancedLogger
-from utils.network import get_versions_for_flavor
+from utils.network import get_versions_for_flavor, download_ngrok_binary
 from utils.properties import load_properties
 from utils.system import (
     check_base_dependencies,
@@ -267,6 +267,14 @@ def ngrok_setup_wizard(
         logger.log("INFO", f"Using ngrok binary at {resolved_binary}")
     else:
         logger.log("WARNING", f"Ngrok binary '{binary_path}' was not found on this device.")
+        if input("Would you like to automatically download and install ngrok? (Y/n): ").strip().lower() != "n":
+            logger.log("INFO", "Downloading ngrok...")
+            downloaded_path = download_ngrok_binary(logger=logger)
+            if downloaded_path:
+                logger.log("SUCCESS", f"Ngrok installed to {downloaded_path}")
+                resolved_binary = str(downloaded_path)
+            else:
+                logger.log("ERROR", "Auto-installation failed.")
 
     authtoken = input("Ngrok authtoken (leave blank to keep the existing config): ").strip()
     if authtoken:
@@ -343,6 +351,23 @@ def playit_setup_wizard(
         logger.log("INFO", f"Using playit binary at {resolved_binary}")
     else:
         logger.log("WARNING", f"Playit binary '{binary_path}' was not found on this device.")
+        if running_on_termux():
+            if input("Would you like to automatically install playit via termux packages? (Y/n): ").strip().lower() != "n":
+                logger.log("INFO", "Installing playit...")
+                result = run_command(
+                    "pkg install tur-repo -y && pkg install playit -y",
+                    logger=logger,
+                    check=False,
+                    shell=True,
+                )
+                if result and result.returncode == 0:
+                    resolved_binary = resolve_tunnel_binary("playit") or resolve_tunnel_binary("playit-cli")
+                    if resolved_binary:
+                        logger.log("SUCCESS", f"Playit installed successfully at {resolved_binary}")
+                    else:
+                        logger.log("ERROR", "Installation succeeded but binary is still missing.")
+                else:
+                    logger.log("ERROR", "Playit auto-installation failed.")
 
     if resolved_binary:
         run_guided_claim = input(

@@ -196,11 +196,18 @@ def remove_file(path: str | os.PathLike[str]) -> None:
     Path(path).unlink(missing_ok=True)
 
 
-def is_pid_running(pid: int | None) -> bool:
+def is_pid_running(pid: int | None, expected_names: list[str] | None = None) -> bool:
     if not pid:
         return False
     try:
-        return psutil.Process(pid).is_running()
+        proc = psutil.Process(pid)
+        if not proc.is_running():
+            return False
+        if expected_names:
+            proc_name = proc.name().lower()
+            if not any(name.lower() in proc_name for name in expected_names):
+                return False
+        return True
     except psutil.Error:
         return False
 
