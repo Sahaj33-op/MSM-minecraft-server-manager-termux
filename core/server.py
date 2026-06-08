@@ -159,10 +159,12 @@ class ServerInstance:
         return self.db_manager.get_last_open_session(self.server_name)
 
     def is_running(self) -> bool:
-        return bool(
-            self.current_pid()
-            or screen_session_exists(self.screen_name, logger=self.logger)
-        )
+        if not self.pid_file.exists():
+            return False
+        pid = self.current_pid()
+        if pid:
+            return True
+        return screen_session_exists(self.screen_name, logger=self.logger)
 
     def get_connection_info(self) -> dict[str, Any]:
         port = self.get_server_port()
@@ -712,6 +714,7 @@ class ServerInstance:
                 write_text_file(self.session_file, str(session_id))
                 self.logger.log("SUCCESS", f"Auto-restarted {self.server_name}", pid=pid)
                 self._start_monitor_thread()
+                self._start_backup_thread()
             except Exception as exc:
                 self.logger.log("ERROR", f"Auto-restart failed for {self.server_name}: {exc}")
         self.logger.log("INFO", f"Auto-restart disabled for {self.server_name}")
@@ -760,12 +763,13 @@ class ServerInstance:
                 )
 
         if provider == "playit":
-            status = start_playit_agent(
+            status, log_handle = start_playit_agent(
                 self.server_dir,
                 binary,
                 self.playit_secret_file,
                 self.logger,
             )
+            self.tunnel_log_handle = log_handle
             if status.state == TUNNEL_STATUS_READY:
                 self.logger.log(
                     "SUCCESS",
@@ -801,12 +805,13 @@ class ServerInstance:
                     ),
                 )
                 return
-            status = start_ngrok_agent(
+            status, log_handle = start_ngrok_agent(
                 self.server_dir,
                 binary,
                 int(local_port),
                 self.logger,
             )
+            self.tunnel_log_handle = log_handle
             if status.state == TUNNEL_STATUS_READY:
                 self.logger.log(
                     "SUCCESS",

@@ -264,15 +264,21 @@ def get_quilt_versions(flavor: str, include_snapshots: bool = False, logger=None
     try:
         game_response = safe_request(session, "GET", f"{api_base}/game", logger=logger)
         loader_response = safe_request(session, "GET", f"{api_base}/loader", logger=logger)
-        if not all([game_response, loader_response]):
+        installer_response = safe_request(session, "GET", f"{api_base}/installer", logger=logger)
+        if not all([game_response, loader_response, installer_response]):
             return {}
         latest_loader = loader_response.json()[0]["version"]
+        latest_installer = installer_response.json()[0]["version"]
         versions: dict[str, Any] = {}
         for entry in game_response.json():
             version = entry["version"]
             snapshot = is_snapshot_version(version)
             if include_snapshots or not snapshot:
-                versions[version] = {"loader": latest_loader, "is_snapshot": snapshot}
+                versions[version] = {
+                    "loader": latest_loader,
+                    "installer": latest_installer,
+                    "is_snapshot": snapshot,
+                }
         return versions
     finally:
         session.close()
@@ -364,7 +370,7 @@ def _determine_download(
         if flavor == "quilt":
             return (
                 "https://meta.quiltmc.org/v3/versions/loader/"
-                f"{version}/{version_info['loader']}/0.0.0/server/jar",
+                f"{version}/{version_info['loader']}/{version_info['installer']}/server/jar",
                 target_filename,
             )
         if flavor == "pocketmine":

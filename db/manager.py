@@ -60,8 +60,7 @@ class DatabaseManager:
                     backup_path TEXT NOT NULL,
                     backup_size INTEGER NOT NULL,
                     created_at TIMESTAMP NOT NULL,
-                    backup_type TEXT DEFAULT 'manual',
-                    compressed_size INTEGER
+                    backup_type TEXT DEFAULT 'manual'
                 );
                 CREATE TABLE IF NOT EXISTS error_log (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -191,10 +190,9 @@ class DatabaseManager:
                         backup_path,
                         backup_size,
                         created_at,
-                        backup_type,
-                        compressed_size
+                        backup_type
                     )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
                     server_name,
@@ -202,7 +200,6 @@ class DatabaseManager:
                     backup_size,
                     datetime.now().isoformat(),
                     backup_type,
-                    backup_size,
                 ),
             )
 

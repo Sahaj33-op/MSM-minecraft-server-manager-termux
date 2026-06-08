@@ -209,8 +209,13 @@ def _parse_java_version(output: str) -> str | None:
     for token in output.replace("\n", " ").split():
         if token.startswith('"') and token.endswith('"'):
             cleaned = token.strip('"')
-            if cleaned and cleaned[0].isdigit():
-                return cleaned.split(".")[0]
+            if not cleaned or not cleaned[0].isdigit():
+                continue
+            parts = cleaned.split(".")
+            # Java 8 and earlier use 1.x.y versioning
+            if parts[0] == "1" and len(parts) > 1:
+                return parts[1]
+            return parts[0]
     return None
 
 
@@ -233,8 +238,8 @@ def get_required_java(version: str | None) -> str:
         return "17"
     parts = version.split(".")
     if len(parts) > 1 and parts[0] == "1":
-        minor = int(parts[1])
-        patch = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+        minor = int(parts[1].split("-")[0])
+        patch = int(parts[2].split("-")[0]) if len(parts) > 2 and parts[2].split("-")[0].isdigit() else 0
         if minor > 20 or (minor == 20 and patch >= 5):
             return "21"
         if minor >= 17:

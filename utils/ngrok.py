@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+from typing import Any
 import socket
 import subprocess
 import time
@@ -144,7 +145,7 @@ def start_ngrok_agent(
     binary_path: str,
     port: int,
     logger,
-) -> TunnelStatus:
+) -> tuple[TunnelStatus, Any]:
     """Start the ngrok background agent and return an initial status."""
     resolved = resolve_ngrok_binary(binary_path)
     if not resolved:
@@ -152,10 +153,10 @@ def start_ngrok_agent(
             provider="ngrok",
             state=TUNNEL_STATUS_BINARY_MISSING,
             message=f"Ngrok binary '{binary_path}' was not found.",
-        )
+        ), None
     existing_pid = read_pid_file(server_dir / TUNNEL_PID_FILE_NAME)
     if existing_pid and is_pid_running(existing_pid):
-        return inspect_ngrok_status(server_dir, port, logger=logger)
+        return inspect_ngrok_status(server_dir, port, logger=logger), None
 
     log_path = server_dir / ".msm.ngrok.log"
     log_handle = log_path.open("a", encoding="utf-8")
@@ -184,7 +185,7 @@ def start_ngrok_agent(
             provider="ngrok",
             state=TUNNEL_STATUS_FAILED,
             message=f"Ngrok exited immediately (code {exit_code}). {tail}",
-        )
+        ), None
 
     log_handle.flush()
 
@@ -206,7 +207,7 @@ def start_ngrok_agent(
             message=f"Tunnel ready: {public_url}",
             endpoint=public_url,
             pid=process.pid,
-        )
+        ), log_handle
     return TunnelStatus(
         provider="ngrok",
         state=TUNNEL_STATUS_PROCESS_RUNNING,
@@ -215,7 +216,7 @@ def start_ngrok_agent(
             "Check http://127.0.0.1:4040 for status."
         ),
         pid=process.pid,
-    )
+    ), log_handle
 
 
 def stop_ngrok_agent(server_dir: Path) -> None:

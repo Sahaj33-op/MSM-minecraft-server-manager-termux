@@ -29,8 +29,7 @@ class RuntimeManager:
                     self.logger,
                 )
                 self._instances[server_name] = instance
-                if instance.is_running():
-                    instance.resume_background_services()
+                self._instances[server_name] = instance
             return instance
 
     def resume_running_servers(self) -> None:

@@ -159,7 +159,7 @@ def start_playit_agent(
     binary_path: str,
     secret_file: Path,
     logger,
-) -> TunnelStatus:
+) -> tuple[TunnelStatus, Any]:
     """Start the playit background agent and return an initial status."""
     resolved = resolve_playit_binary(binary_path)
     if not resolved:
@@ -170,7 +170,7 @@ def start_playit_agent(
                 f"Playit binary '{binary_path}' was not found. "
                 "Install with: pkg install tur-repo && pkg install playit"
             ),
-        )
+        ), None
     if not secret_file.exists():
         return TunnelStatus(
             provider="playit",
@@ -182,7 +182,7 @@ def start_playit_agent(
         )
     existing_pid = read_pid_file(server_dir / TUNNEL_PID_FILE_NAME)
     if existing_pid and is_pid_running(existing_pid):
-        return inspect_playit_status(server_dir)
+        return inspect_playit_status(server_dir), None
 
     log_path = server_dir / ".msm.playit.log"
     log_handle = log_path.open("a", encoding="utf-8")
@@ -211,11 +211,11 @@ def start_playit_agent(
             provider="playit",
             state=TUNNEL_STATUS_FAILED,
             message=f"Playit exited immediately (code {exit_code}). {tail}",
-        )
+        ), None
 
     log_handle.flush()
     status = inspect_playit_status(server_dir)
-    return status
+    return status, log_handle
 
 
 def stop_playit_agent(server_dir: Path) -> None:
