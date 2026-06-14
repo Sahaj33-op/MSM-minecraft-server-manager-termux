@@ -9,8 +9,6 @@ import subprocess
 import time
 from pathlib import Path
 
-import psutil
-
 from core.constants import (
     NGROK_ENDPOINT_FILE_NAME,
     NGROK_TIMEOUT,
@@ -217,9 +215,6 @@ def start_ngrok_agent(
         ),
         pid=process.pid,
     ), log_handle
-
-
-
 
 
 # ---------------------------------------------------------------------------

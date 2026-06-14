@@ -437,7 +437,6 @@ def get_ngrok_public_url(
 def download_ngrok_binary(logger=None) -> Path | None:
     import platform
     import tarfile
-    from utils.system import running_on_termux
 
     arch = platform.machine().lower()
     if arch in ("aarch64", "arm64"):
@@ -450,11 +449,11 @@ def download_ngrok_binary(logger=None) -> Path | None:
         return None
 
     url = f"https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-{ngrok_arch}.tgz"
-    
+
     bin_dir = Path.home() / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
     tar_path = bin_dir / "ngrok.tgz"
-    
+
     session = create_robust_session()
     try:
         response = safe_request(session, "GET", url, logger=logger, stream=True)
@@ -463,14 +462,14 @@ def download_ngrok_binary(logger=None) -> Path | None:
         with tar_path.open("wb") as handle:
             for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
                 handle.write(chunk)
-                
+
         with tarfile.open(tar_path, "r:gz") as tar:
             tar.extractall(path=bin_dir)
-            
+
         ngrok_bin = bin_dir / "ngrok"
         if ngrok_bin.exists():
             ngrok_bin.chmod(0o755)
-            
+
         tar_path.unlink(missing_ok=True)
         return ngrok_bin
     except Exception as exc:
@@ -479,4 +478,3 @@ def download_ngrok_binary(logger=None) -> Path | None:
         return None
     finally:
         session.close()
-

@@ -67,7 +67,7 @@ def test_start_playit_agent_missing_binary(tmp_server_dir):
     secret = tmp_server_dir / PLAYIT_SECRET_FILE_NAME
     secret.write_text("secret-data")
     with patch("utils.playit.resolve_playit_binary", return_value=None):
-        status = start_playit_agent(
+        status, _ = start_playit_agent(
             tmp_server_dir, "nonexistent", secret, None
         )
     assert status.state == TUNNEL_STATUS_BINARY_MISSING
@@ -76,7 +76,7 @@ def test_start_playit_agent_missing_binary(tmp_server_dir):
 def test_start_playit_agent_missing_secret(tmp_server_dir):
     secret = tmp_server_dir / PLAYIT_SECRET_FILE_NAME
     with patch("utils.playit.resolve_playit_binary", return_value="/usr/bin/playit"):
-        status = start_playit_agent(
+        status, _ = start_playit_agent(
             tmp_server_dir, "playit", secret, None
         )
     assert status.state == TUNNEL_STATUS_SECRET_MISSING

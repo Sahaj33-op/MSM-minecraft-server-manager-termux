@@ -246,7 +246,8 @@ def get_required_java(version: str | None) -> str:
     parts = version.split(".")
     if len(parts) > 1 and parts[0] == "1":
         minor = int(parts[1].split("-")[0])
-        patch = int(parts[2].split("-")[0]) if len(parts) > 2 and parts[2].split("-")[0].isdigit() else 0
+        patch_str = parts[2].split("-")[0] if len(parts) > 2 else ""
+        patch = int(patch_str) if patch_str.isdigit() else 0
         if minor > 20 or (minor == 20 and patch >= 5):
             return "21"
         if minor >= 17:

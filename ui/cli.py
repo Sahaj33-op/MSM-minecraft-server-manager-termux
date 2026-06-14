@@ -267,7 +267,8 @@ def ngrok_setup_wizard(
         logger.log("INFO", f"Using ngrok binary at {resolved_binary}")
     else:
         logger.log("WARNING", f"Ngrok binary '{binary_path}' was not found on this device.")
-        if input("Would you like to automatically download and install ngrok? (Y/n): ").strip().lower() != "n":
+        prompt = "Would you like to automatically download and install ngrok? (Y/n): "
+        if input(prompt).strip().lower() != "n":
             logger.log("INFO", "Downloading ngrok...")
             downloaded_path = download_ngrok_binary(logger=logger)
             if downloaded_path:
@@ -352,7 +353,8 @@ def playit_setup_wizard(
     else:
         logger.log("WARNING", f"Playit binary '{binary_path}' was not found on this device.")
         if running_on_termux():
-            if input("Would you like to automatically install playit via termux packages? (Y/n): ").strip().lower() != "n":
+            prompt = "Would you like to automatically install playit via termux packages? (Y/n): "
+            if input(prompt).strip().lower() != "n":
                 logger.log("INFO", "Installing playit...")
                 result = run_command(
                     "pkg install tur-repo -y && pkg install playit -y",
@@ -361,7 +363,10 @@ def playit_setup_wizard(
                     shell=True,
                 )
                 if result and result.returncode == 0:
-                    resolved_binary = resolve_tunnel_binary("playit") or resolve_tunnel_binary("playit-cli")
+                    resolved_binary = (
+                        resolve_tunnel_binary("playit")
+                        or resolve_tunnel_binary("playit-cli")
+                    )
                     if resolved_binary:
                         logger.log("SUCCESS", f"Playit installed successfully at {resolved_binary}")
                     else:
@@ -729,8 +734,9 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
             if choice == "1":
                 value = int(input("RAM in MB: ").strip())
 
-                def updater(saved_config: dict) -> None:
+                def update_ram(saved_config: dict) -> None:
                     saved_config["servers"][current_server]["ram_mb"] = value
+                updater = update_ram
 
             elif choice == "2":
                 value = int(input("Server port: ").strip())
@@ -739,30 +745,34 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
                     pause()
                     continue
 
-                def updater(saved_config: dict) -> None:
+                def update_port(saved_config: dict) -> None:
                     saved_config["servers"][current_server]["server_settings"]["port"] = value
+                updater = update_port
 
             elif choice == "3":
-                def updater(saved_config: dict) -> None:
+                def update_auto_restart(saved_config: dict) -> None:
                     server = saved_config["servers"][current_server]
                     server["auto_restart"] = not server["auto_restart"]
+                updater = update_auto_restart
 
             elif choice == "4":
                 value = input("MOTD: ").strip()
 
-                def updater(saved_config: dict) -> None:
+                def update_motd(saved_config: dict) -> None:
                     saved_config["servers"][current_server]["server_settings"]["motd"] = value
+                updater = update_motd
 
             elif choice == "5":
                 value = int(input("Max players: ").strip())
 
-                def updater(saved_config: dict) -> None:
+                def update_max_players(saved_config: dict) -> None:
                     saved_config["servers"][current_server]["server_settings"][
                         "max-players"
                     ] = value
+                updater = update_max_players
 
             elif choice == "6":
-                def updater(saved_config: dict) -> None:
+                def update_online_mode(saved_config: dict) -> None:
                     server = saved_config["servers"][current_server]
                     current_value = str(
                         server["server_settings"].get("online-mode", "true")
@@ -770,26 +780,30 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
                     server["server_settings"]["online-mode"] = (
                         "false" if current_value == "true" else "true"
                     )
+                updater = update_online_mode
 
             elif choice == "7":
-                def updater(saved_config: dict) -> None:
+                def update_backup_toggle(saved_config: dict) -> None:
                     server = saved_config["servers"][current_server]
                     backup_settings = server.setdefault("backup_settings", {})
                     backup_settings["enabled"] = not backup_settings.get("enabled", False)
+                updater = update_backup_toggle
 
             elif choice == "8":
                 value = float(input("Backup interval in hours: ").strip())
 
-                def updater(saved_config: dict) -> None:
+                def update_backup_interval(saved_config: dict) -> None:
                     saved_config["servers"][current_server]["backup_settings"][
                         "interval_hours"
                     ] = value
+                updater = update_backup_interval
 
             elif choice == "9":
-                def updater(saved_config: dict) -> None:
+                def update_tunnel_toggle(saved_config: dict) -> None:
                     server = saved_config["servers"][current_server]
                     tunnel = server.setdefault("tunnel", {})
                     tunnel["enabled"] = not tunnel.get("enabled", False)
+                updater = update_tunnel_toggle
 
             elif choice == "10":
                 provider_options = ", ".join(SUPPORTED_TUNNEL_PROVIDERS)
@@ -805,7 +819,7 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
                     pause()
                     continue
 
-                def updater(saved_config: dict) -> None:
+                def update_tunnel_provider(saved_config: dict) -> None:
                     tunnel = saved_config["servers"][current_server].setdefault("tunnel", {})
                     previous_provider = tunnel.get("provider", "playit")
                     previous_binary = tunnel.get(
@@ -817,6 +831,7 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
                         previous_binary,
                     ):
                         tunnel["binary_path"] = DEFAULT_TUNNEL_BINARIES.get(value, value)
+                updater = update_tunnel_provider
 
             elif choice == "11":
                 current_provider = server_config["tunnel"].get("provider", "playit")
@@ -829,8 +844,9 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
                     or default_binary
                 )
 
-                def updater(saved_config: dict) -> None:
+                def update_tunnel_binary(saved_config: dict) -> None:
                     saved_config["servers"][current_server]["tunnel"]["binary_path"] = value
+                updater = update_tunnel_binary
 
             elif choice == "12":
                 protocol_options = ", ".join(SUPPORTED_TUNNEL_PROTOCOLS)
@@ -849,10 +865,11 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
                     pause()
                     continue
 
-                def updater(saved_config: dict) -> None:
+                def update_tunnel_protocol(saved_config: dict) -> None:
                     saved_config["servers"][current_server].setdefault(
                         "tunnel", {}
                     )["protocol"] = value
+                updater = update_tunnel_protocol
 
             elif choice == "13":
                 current_host = server_config["tunnel"].get(
@@ -863,10 +880,11 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
                     or current_host
                 )
 
-                def updater(saved_config: dict) -> None:
+                def update_tunnel_host(saved_config: dict) -> None:
                     saved_config["servers"][current_server].setdefault(
                         "tunnel", {}
                     )["local_host"] = value
+                updater = update_tunnel_host
 
             elif choice == "14":
                 current_lp = server_config["tunnel"].get("local_port")
@@ -879,31 +897,34 @@ def configure_server(runtime: RuntimeManager, config_manager: ConfigManager, log
                 else:
                     lp_value = int(raw)
 
-                def updater(saved_config: dict) -> None:
+                def update_tunnel_port(saved_config: dict) -> None:
                     saved_config["servers"][current_server].setdefault(
                         "tunnel", {}
                     )["local_port"] = lp_value
+                updater = update_tunnel_port
 
             elif choice == "15":
                 tunnel_setup_wizard(runtime, config_manager, current_server, logger)
                 continue
 
             elif choice == "16":
-                def updater(saved_config: dict) -> None:
+                def update_rcon_toggle(saved_config: dict) -> None:
                     server = saved_config["servers"][current_server]
                     rcon = server.setdefault("rcon", {})
                     settings = server.setdefault("server_settings", {})
                     enabled = not rcon.get("enabled", False)
                     rcon["enabled"] = enabled
                     settings["enable-rcon"] = str(enabled).lower()
+                updater = update_rcon_toggle
 
             elif choice == "17":
                 value = input("RCON password: ").strip()
 
-                def updater(saved_config: dict) -> None:
+                def update_rcon_password(saved_config: dict) -> None:
                     server = saved_config["servers"][current_server]
                     server["rcon"]["password"] = value
                     server["server_settings"]["rcon.password"] = value
+                updater = update_rcon_password
 
             else:
                 logger.log("ERROR", "Invalid configuration selection.")

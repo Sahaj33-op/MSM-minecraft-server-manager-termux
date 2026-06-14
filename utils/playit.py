@@ -7,8 +7,7 @@ import socket
 import subprocess
 import time
 from pathlib import Path
-
-import psutil
+from typing import Any
 
 from core.constants import (
     PLAYIT_ENDPOINT_FILE_NAME,
@@ -179,7 +178,7 @@ def start_playit_agent(
                 "Playit secret file was not found. "
                 "Run the tunnel setup wizard first."
             ),
-        )
+        ), None
     existing_pid = read_pid_file(server_dir / TUNNEL_PID_FILE_NAME)
     if existing_pid and is_pid_running(existing_pid):
         return inspect_playit_status(server_dir), None
@@ -216,9 +215,6 @@ def start_playit_agent(
     log_handle.flush()
     status = inspect_playit_status(server_dir)
     return status, log_handle
-
-
-
 
 
 # ---------------------------------------------------------------------------
