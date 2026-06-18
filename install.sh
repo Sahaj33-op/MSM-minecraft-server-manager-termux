@@ -102,31 +102,25 @@ install_adoptium_java() {
     esac
 
     local os="linux"
-    # Adoptium uses 'linux' for both standard Linux and Termux/Android environments
-    # as they share the same kernel and binary format (though libc may differ,
-    # Adoptium binaries often work or we might need to handle Termux specifically
-    # if they provide 'android' assets, but usually 'linux' is used).
+    # Adoptium Uses 'linux' for both standard Linux and Termux/Android environments.
 
-    local api_url="https://api.adoptium.net/v3/assets/feature_releases/${version}/any?architecture=${arch}&heap_size=normal&image_type=jre&jvm_impl=hotspot&os=${os}&page=0&page_size=1&project=jdk&sort_method=DEFAULT&sort_order=DESC&vendor=eclipse"
-
-    local download_url
-    download_url=$(run curl -fsSL "${api_url}" | grep -oP '"link":\s*"\K[^"]+' | head -n 1)
-
-    if [ -z "${download_url}" ]; then
-        log_error "Could not find a download link for Java ${version} (${arch}/${os})."
-        return 1
-    fi
+    # Using the /v3/binary/latest endpoint which redirects directly to the tarball.
+    local download_url="https://api.adoptium.net/v3/binary/latest/${version}/ga/${os}/${arch}/jre/hotspot/normal/eclipse"
 
     log_info "Downloading: ${download_url}"
     local tmp_tar="${TMPDIR:-/tmp}/java_${version}.tar.gz"
-    run curl -fsSL "${download_url}" -o "${tmp_tar}"
+
+    # Use -L to follow redirects from the Adoptium API to GitHub
+    if ! run curl -fsSL "${download_url}" -o "${tmp_tar}"; then
+        log_error "Failed to download Java ${version} from Adoptium."
+        return 1
+    fi
 
     log_info "Extracting Java ${version}..."
     as_install_user mkdir -p "${java_dir}"
     as_install_user tar -xzf "${tmp_tar}" -C "${java_dir}" --strip-components=1
     run rm -f "${tmp_tar}"
 }
-
 install_apt_package_if_available() {
     local package_name="$1"
     local required="${2:-required}"
