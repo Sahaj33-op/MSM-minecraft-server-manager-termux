@@ -67,7 +67,10 @@ def safe_request(
 
 def is_snapshot_version(version: str) -> bool:
     lowered = version.lower()
-    return "snapshot" in lowered or "pre" in lowered or lowered.endswith("rc")
+    # Minecraft release versions are strictly numeric and dots (e.g., 1.20, 1.20.1).
+    # Snapshots, pre-releases, and release candidates contain alphabetic characters
+    # (e.g., 24w14a, 1.20-pre1, 1.21.11-rc3).
+    return any(c.isalpha() for c in lowered)
 
 
 def _fetch_paper_build(

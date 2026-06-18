@@ -48,7 +48,7 @@ def resolve_playit_binary(binary_path: str | None = None) -> str | None:
     if binary_path:
         candidates.append(binary_path)
     candidates.extend(["playit-cli", "playit"])
-    
+
     # Remove duplicates while preserving order
     unique_candidates = []
     for c in candidates:
@@ -137,7 +137,7 @@ def inspect_playit_status(server_dir: Path) -> TunnelStatus:
             state=TUNNEL_STATUS_MAPPING_MISSING,
             message=(
                 "Playit agent is running; "
-                "finish tunnel mapping in the playit dashboard"
+                "run the tunnel setup wizard to create or update the mapping"
             ),
             pid=pid,
         )
@@ -243,7 +243,7 @@ def build_playit_mapping_hint(
 ) -> str:
     """Return user-facing instructions for creating a playit tunnel mapping."""
     return (
-        f"Create a playit tunnel in the dashboard:\n"
+        f"Run the Playit setup wizard to create or update this tunnel:\n"
         f"  Protocol: {protocol.upper()}\n"
         f"  Local IP: {local_host}\n"
         f"  Local Port: {local_port}"

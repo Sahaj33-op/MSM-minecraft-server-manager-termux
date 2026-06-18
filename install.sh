@@ -9,172 +9,185 @@ C_YELLOW='\033[93m'
 C_CYAN='\033[96m'
 C_RED='\033[91m'
 
-log_info()    { echo -e "${C_BOLD}${C_CYAN}[INFO]${C_RESET} $*"; }
+log_info() { echo -e "${C_BOLD}${C_CYAN}[INFO]${C_RESET} $*"; }
 log_success() { echo -e "${C_BOLD}${C_GREEN}[SUCCESS]${C_RESET} $*"; }
 log_warning() { echo -e "${C_BOLD}${C_YELLOW}[WARNING]${C_RESET} $*"; }
-log_error()   { echo -e "${C_BOLD}${C_RED}[ERROR]${C_RESET} $*"; }
+log_error() { echo -e "${C_BOLD}${C_RED}[ERROR]${C_RESET} $*"; }
 
 REPO_URL="https://github.com/sahaj33-op/MSM-minecraft-server-manager-termux.git"
 REPO_DIR="MSM-minecraft-server-manager-termux"
+DRY_RUN="${MSM_INSTALL_DRY_RUN:-0}"
+TARGET_HOME="${HOME}"
+SUDO_CMD=()
 
-log_info "Starting MSM installation..."
-
-# ---------------------------------------------------------------------------
-# Privilege escalation
-#
-# When the script is piped from curl (`curl ... | bash`) stdin is the pipe,
-# so 'sudo' cannot prompt for a password interactively.  We handle three
-# cases:
-#
-#   1. Already running as root            -> use commands directly
-#   2. Passwordless / cached sudo works   -> prefix commands with sudo
-#   3. Neither                            -> print instructions and exit
-#
-# The recommended one-liner for non-root users is therefore:
-#   curl -fsSL <URL> | sudo bash
-# ---------------------------------------------------------------------------
-
-if [ "$(id -u)" -eq 0 ]; then
-    _SUDO=""
-elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
-    _SUDO="sudo"
-else
-    log_error "Root privileges are required to install system dependencies."
-    log_info  "Please re-run using one of these commands:"
-    log_info  "  curl -fsSL https://raw.githubusercontent.com/sahaj33-op/MSM-minecraft-server-manager-termux/main/install.sh | sudo bash"
-    log_info  "  -- OR log in as root and re-run --"
-    exit 1
-fi
-
-# Wrapper: prepends sudo only when needed
-priv() {
-    if [ -n "$_SUDO" ]; then
-        sudo "$@"
+run() {
+    if [ "${DRY_RUN}" = "1" ]; then
+        echo "$*"
     else
         "$@"
     fi
 }
 
-# ---------------------------------------------------------------------------
-# apt Java helper: tries multiple candidate package names in order and
-# installs the first one that exists in the local apt cache.
-# ---------------------------------------------------------------------------
-install_java_apt() {
-    # Try newest-first so Debian Trixie (Java 21 only) and older LTS
-    # (Java 17 preferred) both work automatically.
-    local -a candidates=(
-        "openjdk-21-jre-headless"
-        "openjdk-17-jre-headless"
-        "openjdk-21-jre"
-        "default-jre-headless"
-    )
-    for pkg in "${candidates[@]}"; do
-        if apt-cache show "$pkg" >/dev/null 2>&1; then
-            log_info "Installing Java ($pkg)..."
-            priv apt-get install -y "$pkg"
-            return 0
-        fi
-    done
-    log_warning "No Java package found in apt repos."
-    log_warning "Please install Java 17 or 21 manually before starting a server."
+priv() {
+    run "${SUDO_CMD[@]}" "$@"
 }
 
-# ---------------------------------------------------------------------------
-# Dependency installation
-# ---------------------------------------------------------------------------
+as_install_user() {
+    if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && command -v sudo >/dev/null 2>&1; then
+        run sudo -u "${SUDO_USER}" -H "$@"
+    else
+        run "$@"
+    fi
+}
 
-if command -v pkg >/dev/null 2>&1; then
-    # ── Termux ────────────────────────────────────────────────────────────────
+is_termux() {
+    [ -n "${PREFIX:-}" ] && [[ "${PREFIX}" == *"/com.termux/"* ]] && command -v pkg >/dev/null 2>&1
+}
+
+is_debian_like() {
+    command -v apt-get >/dev/null 2>&1
+}
+
+setup_privilege() {
+    if [ "$1" = "termux" ]; then
+        SUDO_CMD=()
+        return
+    fi
+
+    if [ "$(id -u)" -eq 0 ]; then
+        SUDO_CMD=()
+        if [ -n "${SUDO_USER:-}" ]; then
+            TARGET_HOME="$(getent passwd "${SUDO_USER}" 2>/dev/null | cut -d: -f6 || true)"
+            TARGET_HOME="${TARGET_HOME:-${HOME}}"
+        fi
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        SUDO_CMD=(sudo)
+    else
+        log_error "Root privileges are required for Debian/Ubuntu system packages."
+        log_info "Run once with cached sudo, or install dependencies manually and re-run."
+        exit 1
+    fi
+}
+
+install_termux_dependencies() {
     log_info "Termux detected. Updating packages..."
-    pkg update -y
-    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
-        -o Dpkg::Options::="--force-confdef" \
-        -o Dpkg::Options::="--force-confold"
+    run pkg update -y
+    run pkg upgrade -y
 
-    log_info "Installing system dependencies..."
-    pkg install python git screen openjdk-17 openjdk-21 php python-psutil -y
+    log_info "Installing Termux dependencies..."
+    run pkg install -y python git screen openjdk-17 openjdk-21 php python-psutil tur-repo playit
 
-    log_info "Installing playit tunnel support via tur-repo..."
-    if ! pkg list-installed tur-repo >/dev/null 2>&1; then
-        pkg install tur-repo -y
-    fi
-    if ! command -v playit >/dev/null 2>&1; then
-        pkg install playit -y || log_warning "playit installation failed; install manually later."
-    fi
     if command -v playit >/dev/null 2>&1 && ! command -v playit-cli >/dev/null 2>&1; then
-        ln -sf "$(command -v playit)" "$PREFIX/bin/playit-cli" 2>/dev/null || true
+        run ln -sf "$(command -v playit)" "${PREFIX}/bin/playit-cli"
+    fi
+}
+
+install_apt_package_if_available() {
+    local package_name="$1"
+    local required="${2:-required}"
+    if apt-cache show "${package_name}" >/dev/null 2>&1; then
+        priv apt-get install -y "${package_name}"
+    elif [ "${required}" = "required" ]; then
+        log_warning "Package '${package_name}' was not found in apt repositories."
+    fi
+}
+
+install_playit_debian() {
+    if command -v playit >/dev/null 2>&1 || command -v playit-cli >/dev/null 2>&1; then
+        log_info "Playit is already installed."
+        return
     fi
 
-elif command -v apt-get >/dev/null 2>&1; then
-    # ── Debian / Ubuntu / WSL ─────────────────────────────────────────────────
-    log_info "Debian/Ubuntu detected. Updating packages..."
+    log_info "Installing Playit from the official apt repository..."
+    local key_path="${TMPDIR:-/tmp}/playit-cloud-key.gpg"
+    run curl -fsSL https://playit-cloud.github.io/ppa/key.gpg -o "${key_path}"
+    priv gpg --dearmor -o /etc/apt/trusted.gpg.d/playit.gpg "${key_path}"
+    priv sh -c "printf '%s\n' 'deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./' > /etc/apt/sources.list.d/playit-cloud.list"
+    run rm -f "${key_path}"
+    priv apt-get update -y
+    priv apt-get install -y playit
+}
+
+install_debian_dependencies() {
+    log_info "Debian/Ubuntu/WSL detected. Updating packages..."
     priv apt-get update -y
 
-    # Install base tools first — these are always available
     log_info "Installing base dependencies..."
-    priv apt-get install -y git screen python3 python3-pip python3-venv
+    priv apt-get install -y git screen python3 python3-pip python3-venv curl gnupg ca-certificates
 
-    # Java — use the helper so we pick whichever version is in this distro's repos
-    install_java_apt
+    log_info "Installing Java runtimes where available..."
+    install_apt_package_if_available openjdk-17-jre-headless optional
+    install_apt_package_if_available openjdk-21-jre-headless optional
 
-    # php-cli is only needed for PocketMine/Bedrock; skip gracefully if absent
-    log_info "Installing php-cli (optional, for Bedrock/PocketMine servers)..."
-    priv apt-get install -y php-cli 2>/dev/null \
-        || log_warning "php-cli not available; PocketMine/Bedrock servers will not work."
+    log_info "Installing php-cli when available..."
+    install_apt_package_if_available php-cli optional
 
-    log_warning "For playit tunnel support: download from https://playit.gg/download"
+    install_playit_debian
+}
 
-elif command -v pacman >/dev/null 2>&1; then
-    # ── Arch Linux ────────────────────────────────────────────────────────────
-    log_info "Arch Linux detected."
-    priv pacman -Sy --noconfirm git screen python python-pip jre21-openjdk php
-    log_warning "For playit: download from https://playit.gg/download"
+using_current_checkout() {
+    [ -f "msm.py" ] && [ -f "requirements.txt" ]
+}
 
-elif command -v dnf >/dev/null 2>&1; then
-    # ── Fedora / RHEL ─────────────────────────────────────────────────────────
-    log_info "Fedora/RHEL detected."
-    priv dnf install -y git screen python3 python3-pip java-21-openjdk-headless php
-    log_warning "For playit: download from https://playit.gg/download"
+prepare_checkout() {
+    if using_current_checkout; then
+        INSTALL_DIR="$(pwd)"
+        log_info "Using current checkout: ${INSTALL_DIR}"
+        return
+    fi
 
-else
-    log_warning "Package manager not recognized."
-    log_warning "Please manually install: git, screen, python3, pip3, python3-venv, Java 17+, php"
-fi
+    INSTALL_DIR="${MSM_INSTALL_DIR:-${TARGET_HOME}/${REPO_DIR}}"
+    if [ -f "${INSTALL_DIR}/msm.py" ] && [ -f "${INSTALL_DIR}/requirements.txt" ]; then
+        log_info "Reusing existing checkout: ${INSTALL_DIR}"
+    else
+        log_info "Cloning MSM into ${INSTALL_DIR}..."
+        as_install_user git clone "${REPO_URL}" "${INSTALL_DIR}"
+    fi
 
-# ---------------------------------------------------------------------------
-# Clone or reuse repository
-# ---------------------------------------------------------------------------
+    cd "${INSTALL_DIR}"
+}
 
-if [ -d "${REPO_DIR}" ]; then
-    log_warning "${REPO_DIR} already exists. Reusing the existing checkout."
-else
-    log_info "Cloning the MSM repository..."
-    git clone "${REPO_URL}"
-fi
+configure_python_environment() {
+    local python_bin="python3"
+    local venv_args=()
 
-cd "${REPO_DIR}"
+    if is_termux; then
+        python_bin="python"
+        venv_args=(--system-site-packages)
+    elif ! command -v python3 >/dev/null 2>&1 && command -v python >/dev/null 2>&1; then
+        python_bin="python"
+    fi
 
-# ---------------------------------------------------------------------------
-# Python virtual environment
-# ---------------------------------------------------------------------------
+    log_info "Creating Python virtual environment..."
+    as_install_user "${python_bin}" -m venv "${venv_args[@]}" .venv
 
-log_info "Creating a virtual environment..."
-PYTHON_BIN="python3"
-if ! command -v python3 >/dev/null 2>&1 && command -v python >/dev/null 2>&1; then
-    PYTHON_BIN="python"
-fi
+    log_info "Installing Python dependencies..."
+    as_install_user .venv/bin/python -m pip install --upgrade pip
+    as_install_user .venv/bin/python -m pip install -r requirements.txt
+    as_install_user chmod +x msm.py
+}
 
-"$PYTHON_BIN" -m venv --system-site-packages .venv
+main() {
+    log_info "Starting MSM installation..."
 
-log_info "Installing Python dependencies inside .venv..."
-# shellcheck disable=SC1091
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+    if is_termux; then
+        setup_privilege termux
+        install_termux_dependencies
+    elif is_debian_like; then
+        setup_privilege debian
+        install_debian_dependencies
+    else
+        log_error "Only Termux and Debian/Ubuntu/WSL are supported by this installer."
+        log_info "Install python, git, screen, Java 17/21, php, and playit manually, then run MSM."
+        exit 1
+    fi
 
-log_info "Setting execute permissions for msm.py..."
-chmod +x msm.py
+    prepare_checkout
+    configure_python_environment
 
-log_success "MSM has been installed successfully."
-echo -e "\nRun MSM with:"
-echo -e "${C_GREEN}cd ${REPO_DIR} && source .venv/bin/activate && python msm.py${C_RESET}"
+    log_success "MSM has been installed successfully."
+    echo -e "\nRun MSM with:"
+    echo -e "${C_GREEN}cd ${INSTALL_DIR} && source .venv/bin/activate && python msm.py${C_RESET}"
+}
+
+main "$@"

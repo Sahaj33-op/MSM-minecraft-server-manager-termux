@@ -29,6 +29,13 @@ from db.manager import DatabaseManager
 from ui.colors import C
 from utils.logging_utils import EnhancedLogger
 from utils.network import get_versions_for_flavor, download_ngrok_binary
+from utils.playit_api import (
+    PLAYIT_THIRD_PARTY_AUTH_URL,
+    PlayitApiClient,
+    PlayitApiError,
+    load_playit_session,
+    save_playit_session,
+)
 from utils.properties import load_properties
 from utils.system import (
     check_base_dependencies,
@@ -47,7 +54,6 @@ from utils.tunnels import (
     build_playit_claim_exchange_command,
     build_playit_claim_generate_command,
     build_playit_claim_url_command,
-    build_playit_setup_command,
     extract_last_non_empty_line,
     extract_playit_claim_url,
 )
@@ -200,6 +206,88 @@ def save_tunnel_config(
     )
 
 
+def configure_playit_api_tunnel(
+    instance,
+    config_manager: ConfigManager,
+    current_server: str,
+    logger,
+) -> bool:
+    config = config_manager.load()
+    server_config = config["servers"][current_server]
+    tunnel = server_config.setdefault("tunnel", {})
+    secret = read_text_file(instance.playit_secret_file)
+    if not secret:
+        logger.log(
+            "WARNING",
+            "Playit agent is not linked yet; complete the claim flow before creating a tunnel.",
+        )
+        return False
+
+    session_key = load_playit_session()
+    if not session_key:
+        print()
+        print("Open this Playit authorization page:")
+        print(PLAYIT_THIRD_PARTY_AUTH_URL)
+        auth_code = input("Paste the one-time Playit auth code: ").strip()
+        if not auth_code:
+            logger.log("WARNING", "Playit API tunnel setup skipped; no auth code was entered.")
+            return False
+        try:
+            session_key = PlayitApiClient().login_apply(auth_code)
+        except PlayitApiError as exc:
+            logger.log("ERROR", f"Playit authentication failed: {exc}")
+            return False
+        save_choice = input(
+            "Save the Playit login secret locally for future tunnel updates? (Y/n): "
+        ).strip().lower()
+        if save_choice != "n":
+            path = save_playit_session(session_key)
+            logger.log("SUCCESS", f"Saved Playit login secret at {path}")
+
+    protocol = tunnel.get("protocol", "tcp")
+    local_host = tunnel.get("local_host", "127.0.0.1")
+    local_port = tunnel.get("local_port") or instance.get_server_port()
+    flavor = server_config.get("server_flavor")
+    if flavor == "pocketmine":
+        protocol = "udp"
+
+    try:
+        agent_data = PlayitApiClient(agent_secret=secret).agent_rundata()
+        agent_id = agent_data.get("agent_id")
+        if not agent_id:
+            raise PlayitApiError("Playit did not return an agent id.")
+        tunnel_id, endpoint = PlayitApiClient(session_key=session_key).create_or_update_tunnel(
+            server_name=current_server,
+            agent_id=agent_id,
+            flavor=flavor,
+            protocol=protocol,
+            local_host=local_host,
+            local_port=local_port,
+            existing_tunnel_id=tunnel.get("playit_tunnel_id"),
+        )
+    except PlayitApiError as exc:
+        logger.log("ERROR", f"Playit tunnel automation failed: {exc}")
+        return False
+
+    def updater(saved_config: dict) -> None:
+        saved_tunnel = saved_config["servers"][current_server].setdefault("tunnel", {})
+        saved_tunnel["provider"] = "playit"
+        saved_tunnel["protocol"] = protocol
+        saved_tunnel["local_host"] = local_host
+        saved_tunnel["local_port"] = int(local_port)
+        saved_tunnel["playit_tunnel_id"] = tunnel_id
+        if endpoint:
+            saved_tunnel["last_endpoint"] = endpoint
+
+    config_manager.mutate(updater)
+    if endpoint:
+        write_text_file(instance.playit_endpoint_file, endpoint)
+        logger.log("SUCCESS", f"Playit tunnel is configured: {endpoint}")
+    else:
+        logger.log("SUCCESS", "Playit tunnel is configured; endpoint is pending allocation.")
+    return True
+
+
 def tunnel_diagnostics_screen(
     runtime: RuntimeManager,
     config_manager: ConfigManager,
@@ -337,14 +425,13 @@ def playit_setup_wizard(
     print("Playit notes:")
     print(" - MSM uses `claim generate`, `claim url`, and `claim exchange` for setup.")
     print(" - MSM uses `playit-cli start` for the managed background agent.")
-    print(" - You still need to link the agent to your playit account.")
-    print(f" - Create a playit TCP tunnel that forwards to 127.0.0.1:{instance.get_server_port()}.")
+    print(" - MSM can create or update the Playit tunnel after the agent is linked.")
+    print(" - Playit account approval happens in your browser with a one-time code.")
+    print(f" - Local tunnel target defaults to 127.0.0.1:{instance.get_server_port()}.")
     if running_on_termux():
         print("\nInstall playit on Termux:")
         print(" pkg update && pkg upgrade")
-        print(" pkg install tur-repo")
-        print(" pkg install playit")
-        print(" ln -s $PREFIX/bin/playit-cli $PREFIX/bin/playit")
+        print(" pkg install tur-repo playit")
         print(" MSM does not need tmux when it manages playit for this server.")
 
     binary_path = input(f"\nPlayit binary path [{current_binary}]: ").strip() or str(current_binary)
@@ -358,13 +445,24 @@ def playit_setup_wizard(
             prompt = "Would you like to automatically install playit via termux packages? (Y/n): "
             if input(prompt).strip().lower() != "n":
                 logger.log("INFO", "Installing playit...")
-                result = run_command(
-                    "pkg install tur-repo -y && pkg install playit -y",
+                repo_result = run_command(
+                    ["pkg", "install", "-y", "tur-repo"],
                     logger=logger,
                     check=False,
-                    shell=True,
+                    capture_output=True,
                 )
-                if result and result.returncode == 0:
+                playit_result = run_command(
+                    ["pkg", "install", "-y", "playit"],
+                    logger=logger,
+                    check=False,
+                    capture_output=True,
+                )
+                if (
+                    repo_result
+                    and repo_result.returncode == 0
+                    and playit_result
+                    and playit_result.returncode == 0
+                ):
                     resolved_binary = resolve_playit_binary("playit")
                     if resolved_binary:
                         logger.log("SUCCESS", f"Playit installed successfully at {resolved_binary}")
@@ -394,7 +492,13 @@ def playit_setup_wizard(
 
                 logger.log("INFO", "Starting temporary playitd for setup...")
                 daemon = subprocess.Popen(
-                    [resolved_binary, "--secret-path", str(secret_file), "--socket-path", str(socket_file)],
+                    [
+                        resolved_binary,
+                        "--secret-path",
+                        str(secret_file),
+                        "--socket-path",
+                        str(socket_file),
+                    ],
                     cwd=instance.server_dir,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -427,7 +531,11 @@ def playit_setup_wizard(
                 else:
                     logger.log("INFO", f"Playit claim code: {claim_code}")
                     claim_url_result = run_command(
-                        build_playit_claim_url_command(cli_binary, claim_code, socket_path=socket_file),
+                        build_playit_claim_url_command(
+                            cli_binary,
+                            claim_code,
+                            socket_path=socket_file,
+                        ),
                         logger=logger,
                         check=False,
                         capture_output=True,
@@ -438,9 +546,8 @@ def playit_setup_wizard(
                         url_output = (
                             f"{claim_url_result.stdout or ''}\n{claim_url_result.stderr or ''}".strip()
                         )
-                    claim_url = extract_playit_claim_url(url_output) or extract_last_non_empty_line(
-                        url_output
-                    )
+                    claim_url = extract_playit_claim_url(url_output)
+                    claim_url = claim_url or extract_last_non_empty_line(url_output)
                     if claim_url:
                         logger.log("INFO", f"Open this playit claim URL: {claim_url}")
                         print()
@@ -474,7 +581,9 @@ def playit_setup_wizard(
                         stored_secret = read_text_file(instance.playit_secret_file)
                         if not stored_secret:
                             raw_secret_line = extract_last_non_empty_line(exchange_output)
-                            fallback_secret = raw_secret_line.split()[-1] if raw_secret_line else None
+                            fallback_secret = (
+                                raw_secret_line.split()[-1] if raw_secret_line else None
+                            )
                             if fallback_secret:
                                 write_text_file(instance.playit_secret_file, fallback_secret)
                                 stored_secret = fallback_secret
@@ -496,6 +605,18 @@ def playit_setup_wizard(
             finally:
                 if daemon:
                     daemon.terminate()
+
+    if read_text_file(instance.playit_secret_file):
+        auto_map = input(
+            "Create or update the Playit tunnel for this server now? (Y/n): "
+        ).strip().lower() != "n"
+        if auto_map:
+            configure_playit_api_tunnel(
+                instance,
+                config_manager,
+                current_server,
+                logger,
+            )
 
     enable_tunnel = input("Enable playit for this server? (Y/n): ").strip().lower() != "n"
     save_tunnel_config(

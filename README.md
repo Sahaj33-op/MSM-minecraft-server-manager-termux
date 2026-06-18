@@ -28,9 +28,9 @@ MSM manages multiple Minecraft server instances from a single TUI. It downloads 
 - [Supported Server Flavors](#supported-server-flavors)
 - [Requirements](#requirements)
 - [Installation](#installation)
-  - [Quick Install (Termux)](#quick-install-termux)
+  - [Quick Install](#quick-install)
   - [Manual Install (Termux)](#manual-install-termux)
-  - [Manual Install (Linux)](#manual-install-linux)
+  - [Manual Install (Debian/Ubuntu/WSL)](#manual-install-debianubuntuwsl)
 - [Basic Workflow](#basic-workflow)
 - [CLI Menu Reference](#cli-menu-reference)
 - [Feature Details](#feature-details)
@@ -113,6 +113,8 @@ Paper, Folia, and Purpur version metadata is fetched concurrently (up to 8 worke
 | `1.17` – `1.20.4` | Java 17 |
 | `1.20.5+` | Java 21 |
 
+The installer automates Java 17 and 21 where packages are available. Java 8 is not installed automatically; configure `java_homes.8` manually if you need very old Minecraft versions.
+
 ### Optional
 
 | Tool | Purpose |
@@ -125,21 +127,22 @@ Paper, Folia, and Purpur version metadata is fetched concurrently (up to 8 worke
 
 ## Installation
 
-### Quick Install (Termux)
+### Quick Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sahaj33-op/MSM-minecraft-server-manager-termux/main/install.sh | bash
 ```
 
-The installer detects Termux via `pkg` and:
+The installer supports Termux and Debian/Ubuntu/WSL. It:
 
-- Updates packages with `pkg update && pkg upgrade`
-- Installs `python`, `git`, `screen`, `openjdk-17`, `openjdk-21`, `php`
-- Clones the repository (reuses existing checkout if present)
+- Uses `pkg` on Termux and `apt-get` on Debian/Ubuntu/WSL
+- Installs Python, Git, `screen`, Java 17/21, PHP, and Playit support
+- Reuses the current checkout when run from the repo
+- Otherwise clones to `~/MSM-minecraft-server-manager-termux`
 - Creates `.venv` and installs `requirements.txt`
 - Sets `msm.py` executable
 
-On non-Termux systems it prints a manual dependency hint and continues without calling `pkg`.
+Set `MSM_INSTALL_DIR=/custom/path` before running the script to choose a different install directory.
 
 **After install:**
 
@@ -164,12 +167,12 @@ python msm.py
 
 ```bash
 pkg update && pkg upgrade -y
-pkg install python git screen openjdk-17 openjdk-21 php -y
+pkg install -y python git screen openjdk-17 openjdk-21 php python-psutil tur-repo playit
 
 git clone https://github.com/sahaj33-op/MSM-minecraft-server-manager-termux.git
 cd MSM-minecraft-server-manager-termux
 
-python -m venv .venv
+python -m venv --system-site-packages .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
@@ -179,9 +182,22 @@ python msm.py
 
 ---
 
-### Manual Install (Linux)
+### Manual Install (Debian/Ubuntu/WSL)
 
-Install platform equivalents of: `python3`, `python3-venv`, `screen`, Java runtimes, and `php` (PocketMine-MP only).
+Install dependencies:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git screen python3 python3-pip python3-venv curl gnupg ca-certificates
+sudo apt-get install -y openjdk-17-jre-headless openjdk-21-jre-headless php-cli
+curl -fsSL https://playit-cloud.github.io/ppa/key.gpg -o /tmp/playit.gpg
+sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/playit.gpg /tmp/playit.gpg
+echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list
+sudo apt-get update
+sudo apt-get install -y playit
+```
+
+Then install MSM as your normal user:
 
 ```bash
 git clone https://github.com/sahaj33-op/MSM-minecraft-server-manager-termux.git
@@ -376,7 +392,7 @@ ngrok config add-authtoken <your-token>
 
 #### playit
 
-The setup wizard drives three subcommands:
+The setup wizard links the local agent, then can create or update the Playit tunnel through the Playit account API. Agent linking uses:
 
 ```
 playit-cli --stdout claim generate
@@ -389,7 +405,21 @@ playit-cli --stdout --secret_path .msm.playit.secret claim exchange <code>
   -> writes agent secret to .msm.playit.secret
 ```
 
-Once linked, MSM starts the managed agent:
+After the agent is linked, MSM shows this Playit authorization page:
+
+```
+https://playit.gg/account/setup/wizard/new-account/third-party/third-party-select?partner=other
+```
+
+Open it, choose the third-party/other flow, paste the one-time auth code into MSM, and MSM will call the Playit API to create or update a tunnel for the current server. Java servers are mapped as Minecraft Java over TCP; PocketMine-MP is mapped as Minecraft Bedrock over UDP. The local target defaults to `127.0.0.1:<server-port>`.
+
+If you choose to save the Playit login secret, it is stored locally at:
+
+```
+~/.config/msm/playit_session.json
+```
+
+Once configured, MSM starts the managed agent:
 
 ```
 playit-cli --stdout --secret_path .msm.playit.secret start
@@ -404,10 +434,8 @@ MSM validates the tunnel process is still alive 1 second after launch. Immediate
 **Termux install for playit:**
 
 ```bash
-pkg update && pkg upgrade
-pkg install tur-repo
-pkg install playit
-ln -s $PREFIX/bin/playit-cli $PREFIX/bin/playit
+pkg update && pkg upgrade -y
+pkg install -y tur-repo playit
 ```
 
 ---
@@ -525,7 +553,9 @@ MSM creates and migrates `config.json` automatically. Annotated example:
         "enabled": false,
         "provider": "ngrok",
         "binary_path": "ngrok",
-        "autostart": false
+        "autostart": false,
+        "playit_tunnel_id": null,
+        "last_endpoint": null
       },
 
       "rcon": {
@@ -570,12 +600,14 @@ utils/
   archive.py        # create_backup_archive, safe_extract_zip, discover_world_directories
   logging_utils.py  # EnhancedLogger: rotating file log + colored stdout
   network.py        # version catalogs, concurrent build fetchers, binary downloads
+  playit_api.py     # Playit account API auth and tunnel create/update helpers
   properties.py     # load_properties / write_properties for key=value files
   rcon.py           # RCONClient: Source RCON types 2 and 3, 5 s timeout
   system.py         # Java detection, sanitize_input, PID helpers, disk/IP utils
   tunnels.py        # playit command builders and log regex extractors
 tests/
   test_network.py             # Paper concurrent fetcher, Vanilla snapshot filter
+  test_playit_api.py          # Playit account API request/response helpers
   test_security_and_java.py   # zip-slip block, Java version matrix, JAVA_HOME edge cases
   test_tunnels.py             # playit command builders, endpoint/claim URL extraction
 ```
@@ -651,7 +683,7 @@ Test temporaries go to `.test_tmp/` (gitignored; cleaned up per test).
 ## Known Limitations
 
 - **Thread lifetime:** Exiting MSM stops the monitor, auto-restart, and scheduled backup threads. Servers keep running in `screen`. Supervision resumes on next MSM launch.
-- **playit dashboard:** MSM manages the local agent. Creating the actual TCP tunnel mapping in the playit dashboard is still manual.
+- **playit account auth:** Tunnel creation is automated, but Playit still requires a browser-based one-time authorization code before MSM can use the account API.
 - **PocketMine-MP:** Binary download and process start work. The configure/install UI is built around Java server fields; some options are irrelevant for PHP servers.
 - **Live metrics:** TPS, MSPT, and player counts are not collected. The SQLite schema has `tps`, `mspt`, and `player_count` columns, but the monitor loop does not populate them.
 - **Platform:** `screen` and POSIX process behavior are hard dependencies. Unit tests and CI run cross-platform; actual server hosting does not.

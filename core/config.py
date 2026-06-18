@@ -42,6 +42,7 @@ DEFAULT_SERVER_CONFIG = {
         "protocol": "tcp",
         "local_host": "127.0.0.1",
         "local_port": None,
+        "playit_tunnel_id": None,
         "last_endpoint": None,
     },
     "rcon": {

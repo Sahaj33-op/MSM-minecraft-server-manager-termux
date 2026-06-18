@@ -74,3 +74,22 @@ def test_get_vanilla_versions_filters_snapshots(monkeypatch):
 
     assert list(versions) == ["1.20.6"]
     assert versions["1.20.6"]["url"] == "https://example/release.json"
+
+
+def test_is_snapshot_version():
+    from utils.network import is_snapshot_version
+    # Release candidates
+    assert is_snapshot_version("1.21.11-rc3") is True
+    assert is_snapshot_version("1.21-rc1") is True
+    # Pre-releases
+    assert is_snapshot_version("1.20-pre1") is True
+    # Weekly snapshots
+    assert is_snapshot_version("24w14a") is True
+    assert is_snapshot_version("12w30a") is True
+    # Named snapshots
+    assert is_snapshot_version("1.14-snapshot-2") is True
+    # Stable releases
+    assert is_snapshot_version("1.20.6") is False
+    assert is_snapshot_version("1.21") is False
+    assert is_snapshot_version("1.8.8") is False
+
