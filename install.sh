@@ -177,4 +177,4 @@ chmod +x msm.py
 
 log_success "MSM has been installed successfully."
 echo -e "\nRun MSM with:"
-echo -e "${C_GREEN}source .venv/bin/activate && python msm.py${C_RESET}"
+echo -e "${C_GREEN}cd ${REPO_DIR} && source .venv/bin/activate && python msm.py${C_RESET}"
