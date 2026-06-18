@@ -26,6 +26,7 @@ from utils.system import (
     read_pid_file,
     read_text_file,
     remove_file,
+    running_on_termux,
     write_text_file,
 )
 from utils.tunnel_models import TunnelCheck, TunnelStatus
@@ -42,12 +43,19 @@ from utils.tunnels import (
 
 
 def resolve_playit_binary(binary_path: str | None = None) -> str | None:
-    """Return the first usable playit binary, or *None*."""
-    candidates: list[str] = []
+    """Return the first usable playit binary, prioritizing playitd."""
+    candidates: list[str] = ["playitd"]
     if binary_path:
         candidates.append(binary_path)
     candidates.extend(["playit-cli", "playit"])
-    for candidate in candidates:
+    
+    # Remove duplicates while preserving order
+    unique_candidates = []
+    for c in candidates:
+        if c not in unique_candidates:
+            unique_candidates.append(c)
+
+    for candidate in unique_candidates:
         resolved = shutil.which(candidate)
         if resolved:
             return resolved
@@ -162,12 +170,19 @@ def start_playit_agent(
     """Start the playit background agent and return an initial status."""
     resolved = resolve_playit_binary(binary_path)
     if not resolved:
+        if running_on_termux():
+            install_hint = "Install with: pkg install tur-repo && pkg install playit"
+        else:
+            install_hint = (
+                "Download playit from https://playit.gg/download "
+                "or install via your distro's package manager."
+            )
         return TunnelStatus(
             provider="playit",
             state=TUNNEL_STATUS_BINARY_MISSING,
             message=(
                 f"Playit binary '{binary_path}' was not found. "
-                "Install with: pkg install tur-repo && pkg install playit"
+                + install_hint
             ),
         ), None
     if not secret_file.exists():
@@ -185,7 +200,8 @@ def start_playit_agent(
 
     log_path = server_dir / ".msm.playit.log"
     log_handle = log_path.open("a", encoding="utf-8")
-    command = build_playit_start_command(resolved, secret_path=secret_file)
+    socket_file = server_dir / ".msm.playit.sock"
+    command = build_playit_start_command(resolved, secret_path=secret_file, socket_path=socket_file)
     process = subprocess.Popen(
         command,
         cwd=server_dir,

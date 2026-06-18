@@ -47,6 +47,7 @@ from utils.tunnels import (
     build_playit_claim_exchange_command,
     build_playit_claim_generate_command,
     build_playit_claim_url_command,
+    build_playit_setup_command,
     extract_last_non_empty_line,
     extract_playit_claim_url,
 )
@@ -347,7 +348,8 @@ def playit_setup_wizard(
         print(" MSM does not need tmux when it manages playit for this server.")
 
     binary_path = input(f"\nPlayit binary path [{current_binary}]: ").strip() or str(current_binary)
-    resolved_binary = resolve_tunnel_binary(binary_path)
+    from utils.playit import resolve_playit_binary
+    resolved_binary = resolve_playit_binary(binary_path)
     if resolved_binary:
         logger.log("INFO", f"Using playit binary at {resolved_binary}")
     else:
@@ -363,10 +365,7 @@ def playit_setup_wizard(
                     shell=True,
                 )
                 if result and result.returncode == 0:
-                    resolved_binary = (
-                        resolve_tunnel_binary("playit")
-                        or resolve_tunnel_binary("playit-cli")
-                    )
+                    resolved_binary = resolve_playit_binary("playit")
                     if resolved_binary:
                         logger.log("SUCCESS", f"Playit installed successfully at {resolved_binary}")
                     else:
@@ -379,96 +378,124 @@ def playit_setup_wizard(
             "Run the guided playit claim flow now? (Y/n): "
         ).strip().lower() != "n"
         if run_guided_claim:
-            claim_generate = run_command(
-                build_playit_claim_generate_command(resolved_binary),
-                logger=logger,
-                check=False,
-                capture_output=True,
-                cwd=instance.server_dir,
-            )
-            generate_output = ""
-            if claim_generate:
-                generate_output = (
-                    f"{claim_generate.stdout or ''}\n{claim_generate.stderr or ''}".strip()
-                )
-            raw_claim_line = extract_last_non_empty_line(generate_output)
-            claim_code = raw_claim_line.split()[-1] if raw_claim_line else None
+            is_daemon = Path(resolved_binary).name == "playitd"
+            daemon = None
+            cli_binary = resolved_binary
+            socket_file = None
+            if is_daemon:
+                socket_file = instance.server_dir / ".msm.playit.sock"
+                secret_file = instance.playit_secret_file
+                cli_binary = str(Path(resolved_binary).parent / "playit-cli")
+                if not Path(cli_binary).exists():
+                    cli_binary = shutil.which("playit-cli") or "playit-cli"
 
-            if not claim_generate or claim_generate.returncode != 0 or not claim_code:
-                logger.log(
-                    "ERROR",
-                    "Failed to generate a playit claim code.",
+                if socket_file.exists():
+                    socket_file.unlink()
+
+                logger.log("INFO", "Starting temporary playitd for setup...")
+                daemon = subprocess.Popen(
+                    [resolved_binary, "--secret-path", str(secret_file), "--socket-path", str(socket_file)],
+                    cwd=instance.server_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 )
-                if generate_output:
-                    logger.log("INFO", generate_output)
-            else:
-                logger.log("INFO", f"Playit claim code: {claim_code}")
-                claim_url_result = run_command(
-                    build_playit_claim_url_command(resolved_binary, claim_code),
+                time.sleep(1)  # Allow daemon to initialize socket
+
+            try:
+                claim_generate = run_command(
+                    build_playit_claim_generate_command(cli_binary, socket_path=socket_file),
                     logger=logger,
                     check=False,
                     capture_output=True,
                     cwd=instance.server_dir,
                 )
-                url_output = ""
-                if claim_url_result:
-                    url_output = (
-                        f"{claim_url_result.stdout or ''}\n{claim_url_result.stderr or ''}".strip()
+                generate_output = ""
+                if claim_generate:
+                    generate_output = (
+                        f"{claim_generate.stdout or ''}\n{claim_generate.stderr or ''}".strip()
                     )
-                claim_url = extract_playit_claim_url(url_output) or extract_last_non_empty_line(
-                    url_output
-                )
-                if claim_url:
-                    logger.log("INFO", f"Open this playit claim URL: {claim_url}")
-                    print()
-                    print(f"Claim URL: {claim_url}")
-                else:
+                raw_claim_line = extract_last_non_empty_line(generate_output)
+                claim_code = raw_claim_line.split()[-1] if raw_claim_line else None
+
+                if not claim_generate or claim_generate.returncode != 0 or not claim_code:
                     logger.log(
-                        "WARNING",
-                        "MSM could not derive a playit claim URL automatically.",
+                        "ERROR",
+                        "Failed to generate a playit claim code.",
                     )
-                step = input(
-                    "Press Enter after linking the device in your browser, or type 'skip': "
-                ).strip()
-                if step.lower() != "skip":
-                    exchange_result = run_command(
-                        build_playit_claim_exchange_command(
-                            resolved_binary,
-                            claim_code,
-                            secret_path=instance.playit_secret_file,
-                        ),
+                    if generate_output:
+                        logger.log("INFO", generate_output)
+                else:
+                    logger.log("INFO", f"Playit claim code: {claim_code}")
+                    claim_url_result = run_command(
+                        build_playit_claim_url_command(cli_binary, claim_code, socket_path=socket_file),
                         logger=logger,
                         check=False,
                         capture_output=True,
                         cwd=instance.server_dir,
                     )
-                    exchange_output = ""
-                    if exchange_result:
-                        exchange_output = f"{exchange_result.stdout or ''}\n"
-                        exchange_output += exchange_result.stderr or ""
-                        exchange_output = exchange_output.strip()
-                    stored_secret = read_text_file(instance.playit_secret_file)
-                    if not stored_secret:
-                        raw_secret_line = extract_last_non_empty_line(exchange_output)
-                        fallback_secret = raw_secret_line.split()[-1] if raw_secret_line else None
-                        if fallback_secret:
-                            write_text_file(instance.playit_secret_file, fallback_secret)
-                            stored_secret = fallback_secret
-                    if exchange_result and exchange_result.returncode == 0 and stored_secret:
-                        logger.log(
-                            "SUCCESS",
-                            (
-                                f"Stored playit secret for {current_server} "
-                                f"at {instance.playit_secret_file}"
-                            ),
+                    url_output = ""
+                    if claim_url_result:
+                        url_output = (
+                            f"{claim_url_result.stdout or ''}\n{claim_url_result.stderr or ''}".strip()
                         )
+                    claim_url = extract_playit_claim_url(url_output) or extract_last_non_empty_line(
+                        url_output
+                    )
+                    if claim_url:
+                        logger.log("INFO", f"Open this playit claim URL: {claim_url}")
+                        print()
+                        print(f"Claim URL: {claim_url}")
                     else:
                         logger.log(
-                            "ERROR",
-                            "Playit claim exchange did not produce a usable secret.",
+                            "WARNING",
+                            "MSM could not derive a playit claim URL automatically.",
                         )
-                        if exchange_output:
-                            logger.log("INFO", exchange_output)
+                    step = input(
+                        "Press Enter after linking the device in your browser, or type 'skip': "
+                    ).strip()
+                    if step.lower() != "skip":
+                        exchange_result = run_command(
+                            build_playit_claim_exchange_command(
+                                cli_binary,
+                                claim_code,
+                                secret_path=instance.playit_secret_file,
+                                socket_path=socket_file,
+                            ),
+                            logger=logger,
+                            check=False,
+                            capture_output=True,
+                            cwd=instance.server_dir,
+                        )
+                        exchange_output = ""
+                        if exchange_result:
+                            exchange_output = f"{exchange_result.stdout or ''}\n"
+                            exchange_output += exchange_result.stderr or ""
+                            exchange_output = exchange_output.strip()
+                        stored_secret = read_text_file(instance.playit_secret_file)
+                        if not stored_secret:
+                            raw_secret_line = extract_last_non_empty_line(exchange_output)
+                            fallback_secret = raw_secret_line.split()[-1] if raw_secret_line else None
+                            if fallback_secret:
+                                write_text_file(instance.playit_secret_file, fallback_secret)
+                                stored_secret = fallback_secret
+                        if exchange_result and exchange_result.returncode == 0 and stored_secret:
+                            logger.log(
+                                "SUCCESS",
+                                (
+                                    f"Stored playit secret for {current_server} "
+                                    f"at {instance.playit_secret_file}"
+                                ),
+                            )
+                        else:
+                            logger.log(
+                                "ERROR",
+                                "Playit claim exchange did not produce a usable secret.",
+                            )
+                            if exchange_output:
+                                logger.log("INFO", exchange_output)
+            finally:
+                if daemon:
+                    daemon.terminate()
 
     enable_tunnel = input("Enable playit for this server? (Y/n): ").strip().lower() != "n"
     save_tunnel_config(

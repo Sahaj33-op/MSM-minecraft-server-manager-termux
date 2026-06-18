@@ -327,6 +327,12 @@ def check_base_dependencies(logger) -> bool:
                 "INFO",
                 "Install them with: pkg install screen openjdk-17 openjdk-21 php",
             )
+        else:
+            logger.log(
+                "INFO",
+                "Install them with: sudo apt-get install screen openjdk-17-jre-headless"
+                " (Debian/Ubuntu) or the equivalent for your distro.",
+            )
         return False
     if shutil.which("java") is None:
         logger.log(

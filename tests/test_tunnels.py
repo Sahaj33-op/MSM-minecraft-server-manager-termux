@@ -18,7 +18,6 @@ def test_extract_last_non_empty_line_returns_last_non_blank_line():
 def test_build_playit_claim_generate_command_uses_generate_subcommand():
     assert build_playit_claim_generate_command("playit-cli") == [
         "playit-cli",
-        "--stdout",
         "claim",
         "generate",
     ]
@@ -27,7 +26,6 @@ def test_build_playit_claim_generate_command_uses_generate_subcommand():
 def test_build_playit_claim_url_command_uses_url_subcommand():
     assert build_playit_claim_url_command("playit-cli", "claim-code") == [
         "playit-cli",
-        "--stdout",
         "claim",
         "url",
         "claim-code",
@@ -41,7 +39,6 @@ def test_build_playit_claim_exchange_command_uses_secret_path_and_exchange_subco
         secret_path=".msm.playit.secret",
     ) == [
         "playit-cli",
-        "--stdout",
         "--secret_path",
         ".msm.playit.secret",
         "claim",
