@@ -32,7 +32,10 @@ PLAYIT_CLAIM_URL_PATTERN = re.compile(
 )
 
 
+ANSI_ESCAPE_PATTERN = re.compile(r'\x1B(?:\[[0-9;]*[a-zA-Z]|\(B|\)0|#\d|[=>]|7|8)')
+
 def extract_last_non_empty_line(text: str) -> str | None:
+    text = ANSI_ESCAPE_PATTERN.sub('', text)
     for line in reversed(text.splitlines()):
         stripped = line.strip()
         if stripped:
@@ -44,7 +47,7 @@ def build_playit_claim_generate_command(
     binary_path: str | Path, socket_path: str | Path | None = None
 ) -> list[str]:
     cmd = [str(binary_path)]
-    if socket_path:
+    if socket_path and Path(binary_path).name == "playit-cli":
         cmd.extend(["--socket-path", str(socket_path)])
     cmd.extend(["claim", "generate"])
     return cmd
@@ -54,7 +57,7 @@ def build_playit_claim_url_command(
     binary_path: str | Path, claim_code: str, socket_path: str | Path | None = None
 ) -> list[str]:
     cmd = [str(binary_path)]
-    if socket_path:
+    if socket_path and Path(binary_path).name == "playit-cli":
         cmd.extend(["--socket-path", str(socket_path)])
     cmd.extend(["claim", "url", claim_code])
     return cmd
@@ -67,7 +70,7 @@ def build_playit_claim_exchange_command(
     socket_path: str | Path | None = None,
 ) -> list[str]:
     command = [str(binary_path)]
-    if socket_path:
+    if socket_path and Path(binary_path).name == "playit-cli":
         command.extend(["--socket-path", str(socket_path)])
     # In 1.0.6+, playit-cli does not accept --secret-path. The daemon manages it via IPC.
     # We still accept secret_path for backwards compatibility with older playit versions if needed,
@@ -83,7 +86,7 @@ def build_playit_setup_command(
     socket_path: str | Path | None = None,
 ) -> list[str]:
     command = [str(binary_path)]
-    if socket_path:
+    if socket_path and Path(binary_path).name == "playit-cli":
         command.extend(["--socket-path", str(socket_path)])
     command.append("setup")
     return command

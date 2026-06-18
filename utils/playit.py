@@ -43,10 +43,10 @@ from utils.tunnels import (
 
 def resolve_playit_binary(binary_path: str | None = None) -> str | None:
     """Return the first usable playit binary, prioritizing playitd."""
-    candidates: list[str] = ["playitd"]
+    candidates: list[str] = ["playit"]
     if binary_path:
         candidates.append(binary_path)
-    candidates.extend(["playit-cli", "playit"])
+    candidates.extend(["playit-cli", "playitd"])
 
     # Remove duplicates while preserving order
     unique_candidates = []
