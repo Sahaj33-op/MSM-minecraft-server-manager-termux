@@ -18,6 +18,8 @@ REPO_URL="https://github.com/sahaj33-op/MSM-minecraft-server-manager-termux.git"
 REPO_DIR="MSM-minecraft-server-manager-termux"
 DRY_RUN="${MSM_INSTALL_DRY_RUN:-0}"
 TARGET_HOME="${HOME}"
+TARGET_USER="$(id -u -n)"
+TARGET_GROUP="$(id -g -n)"
 SUDO_CMD=()
 
 run() {
@@ -33,8 +35,8 @@ priv() {
 }
 
 as_install_user() {
-    if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && command -v sudo >/dev/null 2>&1; then
-        run sudo -u "${SUDO_USER}" -H "$@"
+    if [ "$(id -u)" -eq 0 ] && [ "${TARGET_USER}" != "root" ] && command -v sudo >/dev/null 2>&1; then
+        run sudo -u "${TARGET_USER}" -H "$@"
     else
         run "$@"
     fi
@@ -57,14 +59,21 @@ setup_privilege() {
     if [ "$(id -u)" -eq 0 ]; then
         SUDO_CMD=()
         if [ -n "${SUDO_USER:-}" ]; then
+            TARGET_USER="${SUDO_USER}"
+            TARGET_GROUP="$(id -g -n "${SUDO_USER}")"
             TARGET_HOME="$(getent passwd "${SUDO_USER}" 2>/dev/null | cut -d: -f6 || true)"
             TARGET_HOME="${TARGET_HOME:-${HOME}}"
         fi
-    elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    elif command -v sudo >/dev/null 2>&1; then
+        # Check if we can sudo (prompts if not cached)
+        if ! sudo -v 2>/dev/null; then
+            log_error "Root privileges are required for Debian/Ubuntu system packages."
+            exit 1
+        fi
         SUDO_CMD=(sudo)
     else
         log_error "Root privileges are required for Debian/Ubuntu system packages."
-        log_info "Run once with cached sudo, or install dependencies manually and re-run."
+        log_info "Please install 'sudo' or run as root."
         exit 1
     fi
 }
@@ -179,9 +188,9 @@ prepare_checkout() {
     fi
 
     # Fix ownership of the installation directory if it exists and we are not root
-    if [ -d "${INSTALL_DIR}" ] && [ "$(id -u)" -ne 0 ] && [ "${#SUDO_CMD[@]}" -ne 0 ]; then
-        log_info "Ensuring correct ownership of ${INSTALL_DIR}..."
-        priv chown -R "$(id -u):$(id -g)" "${INSTALL_DIR}"
+    if [ -d "${INSTALL_DIR}" ] && [ "${TARGET_USER}" != "root" ] && { [ "$(id -u)" -eq 0 ] || [ "${#SUDO_CMD[@]}" -ne 0 ]; }; then
+        log_info "Ensuring correct ownership of ${INSTALL_DIR} for ${TARGET_USER}..."
+        priv chown -R "${TARGET_USER}:${TARGET_GROUP}" "${INSTALL_DIR}"
     fi
 
     cd "${INSTALL_DIR}"
