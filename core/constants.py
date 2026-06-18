@@ -77,6 +77,7 @@ _termux_jvm = Path("/data/data/com.termux/files/usr/lib/jvm")
 COMMON_JAVA_HOME_BASES = [
     *([Path(_java_home)] if _java_home else []),
     *([_termux_jvm] if _termux_jvm.exists() else []),
+    Path(os.path.expanduser("~/.config/msm/java")),
     Path("/usr/lib/jvm"),
     Path("/usr/lib64/jvm"),
     Path("/usr/lib/jvm/java-17-openjdk-amd64"),

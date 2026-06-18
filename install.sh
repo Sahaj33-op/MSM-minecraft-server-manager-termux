@@ -75,11 +75,56 @@ install_termux_dependencies() {
     run pkg upgrade -y
 
     log_info "Installing Termux dependencies..."
-    run pkg install -y python git screen openjdk-17 openjdk-21 php python-psutil tur-repo playit
+    run pkg install -y python git screen php python-psutil tur-repo playit
 
     if command -v playit >/dev/null 2>&1 && ! command -v playit-cli >/dev/null 2>&1; then
         run ln -sf "$(command -v playit)" "${PREFIX}/bin/playit-cli"
     fi
+}
+
+install_adoptium_java() {
+    local version="$1"
+    local java_dir="${TARGET_HOME}/.config/msm/java/${version}"
+
+    if [ -d "${java_dir}" ] && [ -x "${java_dir}/bin/java" ]; then
+        log_info "Java ${version} is already installed at ${java_dir}."
+        return
+    fi
+
+    log_info "Downloading Java ${version} from Adoptium..."
+    local arch
+    arch=$(uname -m)
+    case "${arch}" in
+        x86_64) arch="x64" ;;
+        aarch64) arch="aarch64" ;;
+        armv7l|armv8l) arch="arm" ;;
+        *) log_error "Unsupported architecture: ${arch}"; return 1 ;;
+    esac
+
+    local os="linux"
+    # Adoptium uses 'linux' for both standard Linux and Termux/Android environments
+    # as they share the same kernel and binary format (though libc may differ,
+    # Adoptium binaries often work or we might need to handle Termux specifically
+    # if they provide 'android' assets, but usually 'linux' is used).
+
+    local api_url="https://api.adoptium.net/v3/assets/feature_releases/${version}/any?architecture=${arch}&heap_size=normal&image_type=jre&jvm_impl=hotspot&os=${os}&page=0&page_size=1&project=jdk&sort_method=DEFAULT&sort_order=DESC&vendor=eclipse"
+
+    local download_url
+    download_url=$(run curl -fsSL "${api_url}" | grep -oP '"link":\s*"\K[^"]+' | head -n 1)
+
+    if [ -z "${download_url}" ]; then
+        log_error "Could not find a download link for Java ${version} (${arch}/${os})."
+        return 1
+    fi
+
+    log_info "Downloading: ${download_url}"
+    local tmp_tar="${TMPDIR:-/tmp}/java_${version}.tar.gz"
+    run curl -fsSL "${download_url}" -o "${tmp_tar}"
+
+    log_info "Extracting Java ${version}..."
+    as_install_user mkdir -p "${java_dir}"
+    as_install_user tar -xzf "${tmp_tar}" -C "${java_dir}" --strip-components=1
+    run rm -f "${tmp_tar}"
 }
 
 install_apt_package_if_available() {
@@ -114,10 +159,6 @@ install_debian_dependencies() {
 
     log_info "Installing base dependencies..."
     priv apt-get install -y git screen python3 python3-pip python3-venv curl gnupg ca-certificates
-
-    log_info "Installing Java runtimes where available..."
-    install_apt_package_if_available openjdk-17-jre-headless optional
-    install_apt_package_if_available openjdk-21-jre-headless optional
 
     log_info "Installing php-cli when available..."
     install_apt_package_if_available php-cli optional
@@ -181,6 +222,10 @@ main() {
         log_info "Install python, git, screen, Java 17/21, php, and playit manually, then run MSM."
         exit 1
     fi
+
+    log_info "Installing Java runtimes from Adoptium..."
+    install_adoptium_java 17
+    install_adoptium_java 21
 
     prepare_checkout
     configure_python_environment

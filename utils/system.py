@@ -53,7 +53,12 @@ def run_command(
         command = shlex.split(command)
     try:
         if logger:
-            logger.log("DEBUG", "Executing command", command=command, cwd=str(cwd or Path.cwd()))
+            logger.log(
+                "DEBUG",
+                "Executing command",
+                command=command,
+                cwd=str(cwd or Path.cwd()),
+            )
         return subprocess.run(
             command,
             check=check,
@@ -66,7 +71,9 @@ def run_command(
         )
     except subprocess.CalledProcessError as exc:
         if logger:
-            logger.log("ERROR", "Command failed", command=command, returncode=exc.returncode)
+            logger.log(
+                "ERROR", "Command failed", command=command, returncode=exc.returncode
+            )
         return None
     except subprocess.TimeoutExpired:
         if logger:
@@ -78,7 +85,9 @@ def run_command(
         return None
 
 
-def check_disk_space(path: str | os.PathLike[str], required_mb: int = 1000, logger=None) -> bool:
+def check_disk_space(
+    path: str | os.PathLike[str], required_mb: int = 1000, logger=None
+) -> bool:
     try:
         free_mb = shutil.disk_usage(path).free // (1024 * 1024)
     except OSError as exc:
@@ -107,7 +116,9 @@ def get_system_info() -> dict[str, Any]:
         cpu_usage = psutil.cpu_percent(interval=None)
         max_safe_ram_mb = min(
             int(total_ram_mb * MAX_RAM_PERCENTAGE / 100),
-            available_ram_mb - 512 if available_ram_mb > 1024 else available_ram_mb - 256,
+            available_ram_mb - 512
+            if available_ram_mb > 1024
+            else available_ram_mb - 256,
         )
         return {
             "total_ram_mb": total_ram_mb,
@@ -151,11 +162,15 @@ def build_screen_launch_command(
     startup_command: list[str],
     pid_file: str | os.PathLike[str],
 ) -> list[str]:
-    shell_script = f"echo $$ > {shlex.quote(str(pid_file))}; exec {shlex.join(startup_command)}"
+    shell_script = (
+        f"echo $$ > {shlex.quote(str(pid_file))}; exec {shlex.join(startup_command)}"
+    )
     return ["screen", "-dmS", screen_name, "sh", "-c", shell_script]
 
 
-def wait_for_pid_file(pid_file: str | os.PathLike[str], timeout_seconds: int = 10) -> int | None:
+def wait_for_pid_file(
+    pid_file: str | os.PathLike[str], timeout_seconds: int = 10
+) -> int | None:
     deadline = time.time() + timeout_seconds
     pid_path = Path(pid_file)
     while time.time() < deadline:
@@ -258,7 +273,9 @@ def get_required_java(version: str | None) -> str:
     return "17"
 
 
-def get_java_path(mc_version: str | None, config: dict[str, Any], logger=None) -> str | None:
+def get_java_path(
+    mc_version: str | None, config: dict[str, Any], logger=None
+) -> str | None:
     required_version = get_required_java(mc_version)
     candidates: list[str] = []
 
@@ -283,6 +300,9 @@ def get_java_path(mc_version: str | None, config: dict[str, Any], logger=None) -
     checked: set[str] = set()
     mismatch_path: str | None = None
     mismatch_version: str | None = None
+    compatible_path: str | None = None
+    compatible_version: str | None = None
+
     for candidate in candidates:
         if not candidate or candidate in checked:
             continue
@@ -292,9 +312,20 @@ def get_java_path(mc_version: str | None, config: dict[str, Any], logger=None) -
         actual_version = detect_java_version(candidate, logger=logger)
         if actual_version == required_version:
             return candidate
+
+        # Allow newer Java versions to satisfy older requirements
+        if actual_version and actual_version.isdigit() and required_version.isdigit():
+            if int(actual_version) >= int(required_version):
+                if not compatible_path or int(actual_version) < int(compatible_version):
+                    compatible_path = candidate
+                    compatible_version = actual_version
+
         if actual_version:
             mismatch_path = candidate
             mismatch_version = actual_version
+
+    if compatible_path:
+        return compatible_path
 
     if logger:
         if mismatch_path:
