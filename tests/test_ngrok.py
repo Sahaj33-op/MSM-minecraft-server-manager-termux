@@ -62,9 +62,7 @@ def test_inspect_ngrok_status_with_saved_endpoint(tmp_server_dir):
 
 def test_start_ngrok_agent_missing_binary(tmp_server_dir):
     with patch("utils.ngrok.resolve_ngrok_binary", return_value=None):
-        status, _ = start_ngrok_agent(
-            tmp_server_dir, "nonexistent", 25565, None
-        )
+        status, _ = start_ngrok_agent(tmp_server_dir, "nonexistent", 25565, None)
     assert status.state == TUNNEL_STATUS_BINARY_MISSING
 
 
@@ -91,8 +89,6 @@ def test_diagnose_ngrok_pocketmine_incompatible(tmp_server_dir):
         checks = diagnose_ngrok(
             tmp_server_dir, config, 19132, server_flavor="pocketmine"
         )
-    pmmp_check = next(
-        c for c in checks if c.name == "PocketMine compatibility"
-    )
+    pmmp_check = next(c for c in checks if c.name == "PocketMine compatibility")
     assert pmmp_check.ok is False
     assert "UDP" in pmmp_check.detail

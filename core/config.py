@@ -107,7 +107,9 @@ class ConfigManager:
             with self.path.open("r", encoding="utf-8") as handle:
                 raw = json.load(handle)
         except json.JSONDecodeError:
-            backup_path = self.path.with_suffix(f"{self.path.suffix}.bak_{int(time.time())}")
+            backup_path = self.path.with_suffix(
+                f"{self.path.suffix}.bak_{int(time.time())}"
+            )
             self.path.replace(backup_path)
             self.logger.log(
                 "ERROR",

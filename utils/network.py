@@ -144,7 +144,9 @@ def get_paper_like_versions(
             return {}
         versions = project.json().get("versions", [])
         if not include_snapshots:
-            versions = [version for version in versions if not is_snapshot_version(version)]
+            versions = [
+                version for version in versions if not is_snapshot_version(version)
+            ]
         selected_versions = list(reversed(versions[-PAPER_VERSION_LOOKBACK:]))
         results: dict[str, Any] = {}
         with ThreadPoolExecutor(
@@ -181,7 +183,9 @@ def get_purpur_versions(
             return {}
         versions = project.json().get("versions", [])
         if not include_snapshots:
-            versions = [version for version in versions if not is_snapshot_version(version)]
+            versions = [
+                version for version in versions if not is_snapshot_version(version)
+            ]
         selected_versions = list(reversed(versions[-PAPER_VERSION_LOOKBACK:]))
         results: dict[str, Any] = {}
         with ThreadPoolExecutor(
@@ -240,8 +244,12 @@ def get_fabric_versions(
     session = create_robust_session()
     try:
         game_response = safe_request(session, "GET", f"{api_base}/game", logger=logger)
-        loader_response = safe_request(session, "GET", f"{api_base}/loader", logger=logger)
-        installer_response = safe_request(session, "GET", f"{api_base}/installer", logger=logger)
+        loader_response = safe_request(
+            session, "GET", f"{api_base}/loader", logger=logger
+        )
+        installer_response = safe_request(
+            session, "GET", f"{api_base}/installer", logger=logger
+        )
         if not all([game_response, loader_response, installer_response]):
             return {}
         latest_loader = loader_response.json()[0]["version"]
@@ -261,13 +269,19 @@ def get_fabric_versions(
         session.close()
 
 
-def get_quilt_versions(flavor: str, include_snapshots: bool = False, logger=None) -> dict[str, Any]:
+def get_quilt_versions(
+    flavor: str, include_snapshots: bool = False, logger=None
+) -> dict[str, Any]:
     api_base = SERVER_FLAVORS[flavor]["api_base"]
     session = create_robust_session()
     try:
         game_response = safe_request(session, "GET", f"{api_base}/game", logger=logger)
-        loader_response = safe_request(session, "GET", f"{api_base}/loader", logger=logger)
-        installer_response = safe_request(session, "GET", f"{api_base}/installer", logger=logger)
+        loader_response = safe_request(
+            session, "GET", f"{api_base}/loader", logger=logger
+        )
+        installer_response = safe_request(
+            session, "GET", f"{api_base}/installer", logger=logger
+        )
         if not all([game_response, loader_response, installer_response]):
             return {}
         latest_loader = loader_response.json()[0]["version"]
@@ -399,7 +413,9 @@ def download_server_binary(
     target_path = Path(server_dir) / target_filename
     session = create_robust_session()
     try:
-        response = safe_request(session, "GET", download_url, logger=logger, stream=True)
+        response = safe_request(
+            session, "GET", download_url, logger=logger, stream=True
+        )
         if not response:
             raise RuntimeError(f"Download failed for {download_url}")
         target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -448,7 +464,9 @@ def download_ngrok_binary(logger=None) -> Path | None:
         ngrok_arch = "amd64"
     else:
         if logger:
-            logger.log("ERROR", f"Unsupported architecture for ngrok auto-download: {arch}")
+            logger.log(
+                "ERROR", f"Unsupported architecture for ngrok auto-download: {arch}"
+            )
         return None
 
     url = f"https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-{ngrok_arch}.tgz"

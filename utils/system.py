@@ -116,9 +116,11 @@ def get_system_info() -> dict[str, Any]:
         cpu_usage = psutil.cpu_percent(interval=None)
         max_safe_ram_mb = min(
             int(total_ram_mb * MAX_RAM_PERCENTAGE / 100),
-            available_ram_mb - 512
-            if available_ram_mb > 1024
-            else available_ram_mb - 256,
+            (
+                available_ram_mb - 512
+                if available_ram_mb > 1024
+                else available_ram_mb - 256
+            ),
         )
         return {
             "total_ram_mb": total_ram_mb,

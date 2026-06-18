@@ -30,7 +30,9 @@ def _session_file() -> Path:
 def save_playit_session(session_key: str) -> Path:
     path = _session_file()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"session_key": session_key}, indent=2), encoding="utf-8")
+    path.write_text(
+        json.dumps({"session_key": session_key}, indent=2), encoding="utf-8"
+    )
     try:
         path.chmod(0o600)
     except OSError:
@@ -52,7 +54,9 @@ def load_playit_session() -> str | None:
 
 def _friendly_error(data: Any) -> str:
     if isinstance(data, dict):
-        return data.get("message") or data.get("error") or json.dumps(data, sort_keys=True)
+        return (
+            data.get("message") or data.get("error") or json.dumps(data, sort_keys=True)
+        )
     return str(data)
 
 

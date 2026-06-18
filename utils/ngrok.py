@@ -29,7 +29,6 @@ from utils.system import (
 )
 from utils.tunnel_models import TunnelCheck, TunnelStatus
 
-
 # ---------------------------------------------------------------------------
 # Binary resolution
 # ---------------------------------------------------------------------------
@@ -70,17 +69,13 @@ def save_ngrok_endpoint(server_dir: Path, endpoint: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _read_ngrok_log_tail(
-    server_dir: Path, line_count: int = 10
-) -> str:
+def _read_ngrok_log_tail(server_dir: Path, line_count: int = 10) -> str:
     """Return the last *line_count* lines of the ngrok log."""
     log_path = server_dir / ".msm.ngrok.log"
     if not log_path.exists():
         return ""
     try:
-        lines = log_path.read_text(
-            encoding="utf-8", errors="replace"
-        ).splitlines()
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return ""
     return "\n".join(lines[-line_count:])
@@ -147,11 +142,14 @@ def start_ngrok_agent(
     """Start the ngrok background agent and return an initial status."""
     resolved = resolve_ngrok_binary(binary_path)
     if not resolved:
-        return TunnelStatus(
-            provider="ngrok",
-            state=TUNNEL_STATUS_BINARY_MISSING,
-            message=f"Ngrok binary '{binary_path}' was not found.",
-        ), None
+        return (
+            TunnelStatus(
+                provider="ngrok",
+                state=TUNNEL_STATUS_BINARY_MISSING,
+                message=f"Ngrok binary '{binary_path}' was not found.",
+            ),
+            None,
+        )
     existing_pid = read_pid_file(server_dir / TUNNEL_PID_FILE_NAME)
     if existing_pid and is_pid_running(existing_pid):
         return inspect_ngrok_status(server_dir, port, logger=logger), None
@@ -179,11 +177,14 @@ def start_ngrok_agent(
         log_handle.flush()
         log_handle.close()
         tail = _read_ngrok_log_tail(server_dir)
-        return TunnelStatus(
-            provider="ngrok",
-            state=TUNNEL_STATUS_FAILED,
-            message=f"Ngrok exited immediately (code {exit_code}). {tail}",
-        ), None
+        return (
+            TunnelStatus(
+                provider="ngrok",
+                state=TUNNEL_STATUS_FAILED,
+                message=f"Ngrok exited immediately (code {exit_code}). {tail}",
+            ),
+            None,
+        )
 
     log_handle.flush()
 
@@ -199,22 +200,27 @@ def start_ngrok_agent(
 
     if public_url:
         save_ngrok_endpoint(server_dir, public_url)
-        return TunnelStatus(
+        return (
+            TunnelStatus(
+                provider="ngrok",
+                state=TUNNEL_STATUS_READY,
+                message=f"Tunnel ready: {public_url}",
+                endpoint=public_url,
+                pid=process.pid,
+            ),
+            log_handle,
+        )
+    return (
+        TunnelStatus(
             provider="ngrok",
-            state=TUNNEL_STATUS_READY,
-            message=f"Tunnel ready: {public_url}",
-            endpoint=public_url,
+            state=TUNNEL_STATUS_PROCESS_RUNNING,
+            message=(
+                "Ngrok process started. " "Check http://127.0.0.1:4040 for status."
+            ),
             pid=process.pid,
-        ), log_handle
-    return TunnelStatus(
-        provider="ngrok",
-        state=TUNNEL_STATUS_PROCESS_RUNNING,
-        message=(
-            "Ngrok process started. "
-            "Check http://127.0.0.1:4040 for status."
         ),
-        pid=process.pid,
-    ), log_handle
+        log_handle,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -254,9 +260,7 @@ def diagnose_ngrok(
             )
         )
     else:
-        checks.append(
-            TunnelCheck(name="Protocol", ok=True, detail="tcp")
-        )
+        checks.append(TunnelCheck(name="Protocol", ok=True, detail="tcp"))
 
     if server_flavor == "pocketmine":
         checks.append(
@@ -289,9 +293,7 @@ def diagnose_ngrok(
         )
     )
 
-    status = inspect_ngrok_status(
-        server_dir, int(local_port), logger=logger
-    )
+    status = inspect_ngrok_status(server_dir, int(local_port), logger=logger)
     checks.append(
         TunnelCheck(
             name="Ngrok status",
@@ -314,8 +316,7 @@ def diagnose_ngrok(
                 name="Auth hint",
                 ok=True,
                 detail=(
-                    "If auth is missing, run: "
-                    "ngrok config add-authtoken <token>"
+                    "If auth is missing, run: " "ngrok config add-authtoken <token>"
                 ),
             )
         )

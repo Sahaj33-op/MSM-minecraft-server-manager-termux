@@ -67,18 +67,14 @@ def test_start_playit_agent_missing_binary(tmp_server_dir):
     secret = tmp_server_dir / PLAYIT_SECRET_FILE_NAME
     secret.write_text("secret-data")
     with patch("utils.playit.resolve_playit_binary", return_value=None):
-        status, _ = start_playit_agent(
-            tmp_server_dir, "nonexistent", secret, None
-        )
+        status, _ = start_playit_agent(tmp_server_dir, "nonexistent", secret, None)
     assert status.state == TUNNEL_STATUS_BINARY_MISSING
 
 
 def test_start_playit_agent_missing_secret(tmp_server_dir):
     secret = tmp_server_dir / PLAYIT_SECRET_FILE_NAME
     with patch("utils.playit.resolve_playit_binary", return_value="/usr/bin/playit"):
-        status, _ = start_playit_agent(
-            tmp_server_dir, "playit", secret, None
-        )
+        status, _ = start_playit_agent(tmp_server_dir, "playit", secret, None)
     assert status.state == TUNNEL_STATUS_SECRET_MISSING
 
 
@@ -103,8 +99,6 @@ def test_diagnose_playit_pocketmine_wrong_protocol(tmp_server_dir):
         checks = diagnose_playit(
             tmp_server_dir, config, 19132, server_flavor="pocketmine"
         )
-    pmmp_check = next(
-        c for c in checks if c.name == "PocketMine protocol"
-    )
+    pmmp_check = next(c for c in checks if c.name == "PocketMine protocol")
     assert pmmp_check.ok is False
     assert "UDP" in pmmp_check.detail

@@ -40,7 +40,9 @@ def extract_last_non_empty_line(text: str) -> str | None:
     return None
 
 
-def build_playit_claim_generate_command(binary_path: str | Path, socket_path: str | Path | None = None) -> list[str]:
+def build_playit_claim_generate_command(
+    binary_path: str | Path, socket_path: str | Path | None = None
+) -> list[str]:
     cmd = [str(binary_path)]
     if socket_path:
         cmd.extend(["--socket-path", str(socket_path)])
@@ -48,7 +50,9 @@ def build_playit_claim_generate_command(binary_path: str | Path, socket_path: st
     return cmd
 
 
-def build_playit_claim_url_command(binary_path: str | Path, claim_code: str, socket_path: str | Path | None = None) -> list[str]:
+def build_playit_claim_url_command(
+    binary_path: str | Path, claim_code: str, socket_path: str | Path | None = None
+) -> list[str]:
     cmd = [str(binary_path)]
     if socket_path:
         cmd.extend(["--socket-path", str(socket_path)])

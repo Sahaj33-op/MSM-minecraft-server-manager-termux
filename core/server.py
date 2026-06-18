@@ -33,7 +33,11 @@ from core.constants import (
     TUNNEL_STATUS_READY,
     TUNNEL_STATUS_SECRET_MISSING,
 )
-from utils.archive import create_backup_archive, discover_world_directories, safe_extract_zip
+from utils.archive import (
+    create_backup_archive,
+    discover_world_directories,
+    safe_extract_zip,
+)
 from utils.network import download_server_binary
 from utils.ngrok import (
     inspect_ngrok_status,
@@ -193,25 +197,17 @@ class ServerInstance:
                         tunnel_status = "playit needs account linking"
                     elif status.state == "mapping_missing":
                         protocol = tunnel_config.get("protocol", "tcp")
-                        local_host = tunnel_config.get(
-                            "local_host", "127.0.0.1"
-                        )
-                        local_port = tunnel_config.get(
-                            "local_port"
-                        ) or port
+                        local_host = tunnel_config.get("local_host", "127.0.0.1")
+                        local_port = tunnel_config.get("local_port") or port
                         tunnel_status = build_playit_mapping_hint(
                             protocol, local_host, int(local_port)
                         )
                     else:
                         tunnel_status = status.message
             elif tunnel_provider == "ngrok":
-                status = inspect_ngrok_status(
-                    self.server_dir, port, logger=self.logger
-                )
+                status = inspect_ngrok_status(self.server_dir, port, logger=self.logger)
                 tunnel_url = status.endpoint
-                tunnel_status = (
-                    tunnel_url or status.message
-                )
+                tunnel_status = tunnel_url or status.message
             else:
                 tunnel_status = f"{tunnel_provider} is not supported yet"
 
@@ -283,7 +279,9 @@ class ServerInstance:
         ram_mb = int(server_config.get("ram_mb", 1024))
         flavor_info = SERVER_FLAVORS.get(flavor)
         if not flavor_info or not version:
-            raise RuntimeError("Server is not installed or is missing flavor/version metadata.")
+            raise RuntimeError(
+                "Server is not installed or is missing flavor/version metadata."
+            )
 
         artifact = self.resolve_server_artifact(server_config)
         if flavor_info["type"] == "java":
@@ -308,7 +306,10 @@ class ServerInstance:
         _config, server_config = self.refresh_config()
         properties = load_properties(self.server_dir / SERVER_PROPERTIES_FILE)
         properties.update(
-            {key: str(value) for key, value in server_config.get("server_settings", {}).items()}
+            {
+                key: str(value)
+                for key, value in server_config.get("server_settings", {}).items()
+            }
         )
 
         rcon_config = server_config.get("rcon", {})
@@ -359,7 +360,9 @@ class ServerInstance:
                 server_config.setdefault("rcon", {})["enabled"] = enabled
                 settings["enable-rcon"] = str(enabled).lower()
             if "rcon.password" in properties:
-                server_config.setdefault("rcon", {})["password"] = str(properties["rcon.password"])
+                server_config.setdefault("rcon", {})["password"] = str(
+                    properties["rcon.password"]
+                )
 
         self.config_manager.mutate(updater)
 
@@ -453,13 +456,19 @@ class ServerInstance:
                 startup_command,
                 self.pid_file,
             )
-            started = run_command(launch_command, logger=self.logger, cwd=self.server_dir)
+            started = run_command(
+                launch_command, logger=self.logger, cwd=self.server_dir
+            )
             if not started:
-                self.logger.log("ERROR", f"Failed to start {self.server_name} in screen.")
+                self.logger.log(
+                    "ERROR", f"Failed to start {self.server_name} in screen."
+                )
                 return False
             pid = wait_for_pid_file(self.pid_file)
             if not pid:
-                self.logger.log("ERROR", f"Unable to determine a PID for {self.server_name}.")
+                self.logger.log(
+                    "ERROR", f"Unable to determine a PID for {self.server_name}."
+                )
                 return False
             _config, server_config = self.refresh_config()
             session_id = self.db_manager.log_session_start(
@@ -529,7 +538,9 @@ class ServerInstance:
             if not force:
                 stopped = self.send_command("stop")
                 if not stopped:
-                    self.logger.log("WARNING", "Graceful stop failed; falling back to screen.")
+                    self.logger.log(
+                        "WARNING", "Graceful stop failed; falling back to screen."
+                    )
                 for _ in range(20):
                     if not self.is_running():
                         break
@@ -570,10 +581,21 @@ class ServerInstance:
                     self.logger.log("INFO", response.strip())
                 return True
             except (RCONError, OSError) as exc:
-                self.logger.log("WARNING", f"RCON failed, falling back to screen: {exc}")
+                self.logger.log(
+                    "WARNING", f"RCON failed, falling back to screen: {exc}"
+                )
 
         result = run_command(
-            ["screen", "-S", self.screen_name, "-p", "0", "-X", "stuff", f"{command}\n"],
+            [
+                "screen",
+                "-S",
+                self.screen_name,
+                "-p",
+                "0",
+                "-X",
+                "stuff",
+                f"{command}\n",
+            ],
             logger=self.logger,
             check=False,
         )
@@ -619,7 +641,9 @@ class ServerInstance:
             return
         if self.backup_thread and self.backup_thread.is_alive():
             return
-        interval_hours = float(server_config["backup_settings"].get("interval_hours", 6))
+        interval_hours = float(
+            server_config["backup_settings"].get("interval_hours", 6)
+        )
         self.next_backup_deadline = time.time() + (interval_hours * 3600)
         self.backup_thread = threading.Thread(
             target=self._backup_loop,
@@ -650,7 +674,9 @@ class ServerInstance:
                 with process.oneshot():
                     cpu_usage = process.cpu_percent(interval=None)
                     ram_usage = process.memory_percent()
-                self.db_manager.log_performance_metric(self.server_name, ram_usage, cpu_usage)
+                self.db_manager.log_performance_metric(
+                    self.server_name, ram_usage, cpu_usage
+                )
             except psutil.Error:
                 break
         self.logger.log("INFO", f"Stopped monitoring {self.server_name}")
@@ -669,7 +695,9 @@ class ServerInstance:
             try:
                 self.create_backup(backup_type="scheduled")
             except Exception as exc:
-                self.logger.log("ERROR", f"Scheduled backup failed for {self.server_name}: {exc}")
+                self.logger.log(
+                    "ERROR", f"Scheduled backup failed for {self.server_name}: {exc}"
+                )
             self.next_backup_deadline = time.time() + (interval_hours * 3600)
 
     def _auto_restart_loop(self) -> None:
@@ -685,7 +713,9 @@ class ServerInstance:
                 self.db_manager.increment_restart_count(session_id)
                 self.db_manager.log_session_end(session_id)
                 remove_file(self.session_file)
-            self.logger.log("WARNING", f"{self.server_name} exited unexpectedly. Restarting soon.")
+            self.logger.log(
+                "WARNING", f"{self.server_name} exited unexpectedly. Restarting soon."
+            )
             time.sleep(AUTO_RESTART_DELAY_SECONDS)
             if self.auto_restart_stop_event.is_set() or self._manual_stop_requested:
                 break
@@ -696,7 +726,9 @@ class ServerInstance:
                     startup_command,
                     self.pid_file,
                 )
-                started = run_command(launch_command, logger=self.logger, cwd=self.server_dir)
+                started = run_command(
+                    launch_command, logger=self.logger, cwd=self.server_dir
+                )
                 if not started:
                     continue
                 pid = wait_for_pid_file(self.pid_file)
@@ -709,11 +741,15 @@ class ServerInstance:
                     server_config["server_version"],
                 )
                 write_text_file(self.session_file, str(session_id))
-                self.logger.log("SUCCESS", f"Auto-restarted {self.server_name}", pid=pid)
+                self.logger.log(
+                    "SUCCESS", f"Auto-restarted {self.server_name}", pid=pid
+                )
                 self._start_monitor_thread()
                 self._start_backup_thread()
             except Exception as exc:
-                self.logger.log("ERROR", f"Auto-restart failed for {self.server_name}: {exc}")
+                self.logger.log(
+                    "ERROR", f"Auto-restart failed for {self.server_name}: {exc}"
+                )
         self.logger.log("INFO", f"Auto-restart disabled for {self.server_name}")
 
     def start_tunnel(self) -> None:
@@ -733,9 +769,7 @@ class ServerInstance:
         )
         protocol = tunnel_config.get("protocol", "tcp")
         local_host = tunnel_config.get("local_host", "127.0.0.1")
-        port = int(
-            server_config.get("server_settings", {}).get("port", 25565)
-        )
+        port = int(server_config.get("server_settings", {}).get("port", 25565))
         local_port = tunnel_config.get("local_port") or port
         flavor = server_config.get("server_flavor")
 
@@ -778,9 +812,7 @@ class ServerInstance:
                     f"Link this device in your browser: {status.claim_url}",
                 )
             elif status.state == TUNNEL_STATUS_MAPPING_MISSING:
-                hint = build_playit_mapping_hint(
-                    protocol, local_host, int(local_port)
-                )
+                hint = build_playit_mapping_hint(protocol, local_host, int(local_port))
                 self.logger.log("INFO", hint)
             elif status.state in (
                 TUNNEL_STATUS_BINARY_MISSING,

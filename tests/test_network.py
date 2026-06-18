@@ -28,7 +28,12 @@ def test_get_paper_like_versions_collects_latest_builds(monkeypatch):
             return DummyResponse(
                 {
                     "builds": [
-                        {"build": 21, "downloads": {"application": {"name": "paper-1.20.6-21.jar"}}}
+                        {
+                            "build": 21,
+                            "downloads": {
+                                "application": {"name": "paper-1.20.6-21.jar"}
+                            },
+                        }
                     ]
                 }
             )
@@ -36,7 +41,12 @@ def test_get_paper_like_versions_collects_latest_builds(monkeypatch):
             return DummyResponse(
                 {
                     "builds": [
-                        {"build": 17, "downloads": {"application": {"name": "paper-1.20.5-17.jar"}}}
+                        {
+                            "build": 17,
+                            "downloads": {
+                                "application": {"name": "paper-1.20.5-17.jar"}
+                            },
+                        }
                     ]
                 }
             )
@@ -61,8 +71,16 @@ def test_get_vanilla_versions_filters_snapshots(monkeypatch):
         return DummyResponse(
             {
                 "versions": [
-                    {"id": "1.20.6", "type": "release", "url": "https://example/release.json"},
-                    {"id": "24w14a", "type": "snapshot", "url": "https://example/snapshot.json"},
+                    {
+                        "id": "1.20.6",
+                        "type": "release",
+                        "url": "https://example/release.json",
+                    },
+                    {
+                        "id": "24w14a",
+                        "type": "snapshot",
+                        "url": "https://example/snapshot.json",
+                    },
                 ]
             }
         )
@@ -78,6 +96,7 @@ def test_get_vanilla_versions_filters_snapshots(monkeypatch):
 
 def test_is_snapshot_version():
     from utils.network import is_snapshot_version
+
     # Release candidates
     assert is_snapshot_version("1.21.11-rc3") is True
     assert is_snapshot_version("1.21-rc1") is True
@@ -92,4 +111,3 @@ def test_is_snapshot_version():
     assert is_snapshot_version("1.20.6") is False
     assert is_snapshot_version("1.21") is False
     assert is_snapshot_version("1.8.8") is False
-

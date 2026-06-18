@@ -31,7 +31,9 @@ class RCONClient:
         self.close()
 
     def connect(self) -> None:
-        self.socket = socket.create_connection((self.host, self.port), timeout=self.timeout)
+        self.socket = socket.create_connection(
+            (self.host, self.port), timeout=self.timeout
+        )
         self.socket.settimeout(self.timeout)
         self.authenticate()
 
@@ -41,15 +43,21 @@ class RCONClient:
             self.socket = None
 
     def authenticate(self) -> None:
-        response_id, _response_type, _payload = self._roundtrip(1, self.AUTH, self.password)
+        response_id, _response_type, _payload = self._roundtrip(
+            1, self.AUTH, self.password
+        )
         if response_id == -1:
             raise RCONError("RCON authentication failed")
 
     def command(self, command: str) -> str:
-        _response_id, _response_type, payload = self._roundtrip(2, self.COMMAND, command)
+        _response_id, _response_type, payload = self._roundtrip(
+            2, self.COMMAND, command
+        )
         return payload
 
-    def _roundtrip(self, request_id: int, packet_type: int, payload: str) -> tuple[int, int, str]:
+    def _roundtrip(
+        self, request_id: int, packet_type: int, payload: str
+    ) -> tuple[int, int, str]:
         self._send_packet(request_id, packet_type, payload)
         return self._receive_packet()
 

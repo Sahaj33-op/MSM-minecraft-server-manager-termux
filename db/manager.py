@@ -28,8 +28,7 @@ class DatabaseManager:
     def _init_database(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self.get_connection() as conn:
-            conn.executescript(
-                """
+            conn.executescript("""
                 CREATE TABLE IF NOT EXISTS server_sessions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     server_name TEXT NOT NULL,
@@ -79,8 +78,7 @@ class DatabaseManager:
                     ON backup_history(server_name);
                 CREATE INDEX IF NOT EXISTS idx_errors_time
                     ON error_log(timestamp);
-                """
-            )
+                """)
 
     @contextmanager
     def get_connection(self) -> Iterator[sqlite3.Connection]:
@@ -171,7 +169,13 @@ class DatabaseManager:
                     (server_name, timestamp, ram_usage, cpu_usage, player_count)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (server_name, datetime.now().isoformat(), ram_usage, cpu_usage, player_count),
+                (
+                    server_name,
+                    datetime.now().isoformat(),
+                    ram_usage,
+                    cpu_usage,
+                    player_count,
+                ),
             )
 
     def log_backup(
@@ -256,11 +260,15 @@ class DatabaseManager:
                 (server_name,),
             ).fetchone()
             return {
-                "total_sessions": session_stats["total_sessions"] if session_stats else 0,
+                "total_sessions": (
+                    session_stats["total_sessions"] if session_stats else 0
+                ),
                 "avg_duration": session_stats["avg_duration"] if session_stats else 0,
                 "total_uptime": session_stats["total_uptime"] if session_stats else 0,
                 "total_crashes": session_stats["total_crashes"] if session_stats else 0,
-                "total_restarts": session_stats["total_restarts"] if session_stats else 0,
+                "total_restarts": (
+                    session_stats["total_restarts"] if session_stats else 0
+                ),
                 "avg_ram_usage_24h": perf_stats["avg_ram_usage"] if perf_stats else 0,
                 "avg_cpu_usage_24h": perf_stats["avg_cpu_usage"] if perf_stats else 0,
                 "peak_players_24h": perf_stats["peak_players"] if perf_stats else 0,

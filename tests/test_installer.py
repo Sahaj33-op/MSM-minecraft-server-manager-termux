@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = REPO_ROOT / "install.sh"
 
@@ -69,7 +68,9 @@ def test_termux_install_does_not_require_sudo_or_use_apt_get(tmp_path: Path) -> 
         _write_stub(fake_bin, command)
     _write_stub(fake_bin, "id", "printf '10070\\n'\n")
 
-    result = _run_installer(tmp_path, fake_bin, {"PREFIX": "/data/data/com.termux/files/usr"})
+    result = _run_installer(
+        tmp_path, fake_bin, {"PREFIX": "/data/data/com.termux/files/usr"}
+    )
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "pkg update -y" in result.stdout
@@ -97,7 +98,7 @@ def test_debian_install_uses_sudo_only_for_system_packages(tmp_path: Path) -> No
     ):
         _write_stub(fake_bin, command)
     _write_stub(fake_bin, "id", "printf '1000\\n'\n")
-    _write_stub(fake_bin, "sudo", "exec \"$@\"\n")
+    _write_stub(fake_bin, "sudo", 'exec "$@"\n')
 
     result = _run_installer(tmp_path, fake_bin, {"PREFIX": ""})
 

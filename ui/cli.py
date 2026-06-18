@@ -527,7 +527,7 @@ def playit_setup_wizard(
                     cli_binary = (
                         shutil.which("playit-cli")
                         or shutil.which("playit")
-                        or "playit-cli"
+                        or resolved_binary
                     )
 
                 if socket_file.exists():
@@ -1094,9 +1094,9 @@ def configure_server(
                 )
 
                 def update_tunnel_binary(saved_config: dict) -> None:
-                    saved_config["servers"][current_server]["tunnel"]["binary_path"] = (
-                        value
-                    )
+                    saved_config["servers"][current_server]["tunnel"][
+                        "binary_path"
+                    ] = value
 
                 updater = update_tunnel_binary
 

@@ -14,7 +14,9 @@ from ui.colors import C
 class EnhancedLogger:
     """Log to file and stdout with lightweight structured context."""
 
-    def __init__(self, log_file: str | os.PathLike[str], max_size: int, retention_days: int):
+    def __init__(
+        self, log_file: str | os.PathLike[str], max_size: int, retention_days: int
+    ):
         self.log_file = Path(log_file)
         self.max_size = max_size
         self.retention_days = retention_days
@@ -39,7 +41,9 @@ class EnhancedLogger:
     def _rotate_log_if_needed(self) -> None:
         if not self.log_file.exists() or self.log_file.stat().st_size <= self.max_size:
             return
-        backup_file = self.log_file.with_suffix(f"{self.log_file.suffix}.{int(time.time())}")
+        backup_file = self.log_file.with_suffix(
+            f"{self.log_file.suffix}.{int(time.time())}"
+        )
         self.log_file.replace(backup_file)
         cutoff = time.time() - (self.retention_days * 24 * 60 * 60)
         for file in self.log_file.parent.glob(f"{self.log_file.name}.*"):

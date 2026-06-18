@@ -41,7 +41,9 @@ class FakeSession:
 
 def test_login_apply_uses_third_party_code_and_returns_session_key() -> None:
     session = FakeSession(
-        FakeResponse({"status": "success", "data": {"session_key": "session-123", "auth": {}}})
+        FakeResponse(
+            {"status": "success", "data": {"session_key": "session-123", "auth": {}}}
+        )
     )
     client = PlayitApiClient(session=session)
 
@@ -53,7 +55,9 @@ def test_login_apply_uses_third_party_code_and_returns_session_key() -> None:
     assert session.calls[0][2] == {"token": "one-time-code"}
 
 
-def test_playit_session_save_and_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_playit_session_save_and_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("utils.playit_api.CONFIG_DIR", tmp_path)
 
     save_playit_session("session-abc")
@@ -64,7 +68,9 @@ def test_playit_session_save_and_load(tmp_path: Path, monkeypatch: pytest.Monkey
 
 def test_agent_rundata_uses_agent_secret_auth() -> None:
     session = FakeSession(
-        FakeResponse({"status": "success", "data": {"agent_id": "agent-id", "tunnels": []}})
+        FakeResponse(
+            {"status": "success", "data": {"agent_id": "agent-id", "tunnels": []}}
+        )
     )
     client = PlayitApiClient(agent_secret="agent-secret", session=session)
 
@@ -120,7 +126,10 @@ def test_create_or_update_tunnel_updates_existing_tunnel() -> None:
                         {
                             "id": "existing-id",
                             "name": "MSM survival",
-                            "origin": {"type": "agent", "data": {"agent_id": "agent-id"}},
+                            "origin": {
+                                "type": "agent",
+                                "data": {"agent_id": "agent-id"},
+                            },
                             "alloc": {
                                 "status": "allocated",
                                 "data": {
@@ -195,7 +204,9 @@ def test_create_or_update_tunnel_creates_when_missing() -> None:
 
 
 def test_api_fail_status_raises_clear_error() -> None:
-    session = FakeSession(FakeResponse({"status": "fail", "data": "RequiresVerifiedAccount"}))
+    session = FakeSession(
+        FakeResponse({"status": "fail", "data": "RequiresVerifiedAccount"})
+    )
     client = PlayitApiClient(session_key="session-key", session=session)
 
     with pytest.raises(PlayitApiError, match="RequiresVerifiedAccount"):

@@ -7,7 +7,11 @@ import stat
 import zipfile
 from pathlib import Path
 
-from core.constants import BACKUP_COMPRESSION, BACKUP_COMPRESSION_LEVEL, WORLD_SUFFIX_PATTERN
+from core.constants import (
+    BACKUP_COMPRESSION,
+    BACKUP_COMPRESSION_LEVEL,
+    WORLD_SUFFIX_PATTERN,
+)
 from utils.properties import load_properties
 
 

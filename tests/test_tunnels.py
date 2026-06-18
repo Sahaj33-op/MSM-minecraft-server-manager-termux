@@ -48,7 +48,9 @@ def test_build_playit_claim_exchange_command_uses_secret_path_and_exchange_subco
 
 
 def test_build_playit_start_command_uses_secret_path_and_start_subcommand():
-    assert build_playit_start_command("playit-cli", secret_path=".msm.playit.secret") == [
+    assert build_playit_start_command(
+        "playit-cli", secret_path=".msm.playit.secret"
+    ) == [
         "playit-cli",
         "--stdout",
         "--secret_path",
@@ -80,7 +82,9 @@ def test_extract_playit_claim_url_from_log():
     INFO visit https://playit.gg/claim/some-agent-token to link this device
     """
 
-    assert extract_playit_claim_url(log_text) == "https://playit.gg/claim/some-agent-token"
+    assert (
+        extract_playit_claim_url(log_text) == "https://playit.gg/claim/some-agent-token"
+    )
 
 
 def test_extract_playit_claim_url_rejects_non_claim_urls():

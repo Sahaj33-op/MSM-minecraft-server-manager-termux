@@ -36,7 +36,6 @@ from utils.tunnels import (
     extract_playit_public_endpoint,
 )
 
-
 # ---------------------------------------------------------------------------
 # Binary resolution
 # ---------------------------------------------------------------------------
@@ -84,17 +83,13 @@ def save_playit_endpoint(server_dir: Path, endpoint: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def read_playit_log_tail(
-    server_dir: Path, line_count: int = 80
-) -> str:
+def read_playit_log_tail(server_dir: Path, line_count: int = 80) -> str:
     """Return the last *line_count* lines of the playit log."""
     log_path = server_dir / ".msm.playit.log"
     if not log_path.exists():
         return ""
     try:
-        lines = log_path.read_text(
-            encoding="utf-8", errors="replace"
-        ).splitlines()
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return ""
     return "\n".join(lines[-line_count:])
@@ -177,23 +172,28 @@ def start_playit_agent(
                 "Download playit from https://playit.gg/download "
                 "or install via your distro's package manager."
             )
-        return TunnelStatus(
-            provider="playit",
-            state=TUNNEL_STATUS_BINARY_MISSING,
-            message=(
-                f"Playit binary '{binary_path}' was not found. "
-                + install_hint
+        return (
+            TunnelStatus(
+                provider="playit",
+                state=TUNNEL_STATUS_BINARY_MISSING,
+                message=(
+                    f"Playit binary '{binary_path}' was not found. " + install_hint
+                ),
             ),
-        ), None
+            None,
+        )
     if not secret_file.exists():
-        return TunnelStatus(
-            provider="playit",
-            state=TUNNEL_STATUS_SECRET_MISSING,
-            message=(
-                "Playit secret file was not found. "
-                "Run the tunnel setup wizard first."
+        return (
+            TunnelStatus(
+                provider="playit",
+                state=TUNNEL_STATUS_SECRET_MISSING,
+                message=(
+                    "Playit secret file was not found. "
+                    "Run the tunnel setup wizard first."
+                ),
             ),
-        ), None
+            None,
+        )
     existing_pid = read_pid_file(server_dir / TUNNEL_PID_FILE_NAME)
     if existing_pid and is_pid_running(existing_pid):
         return inspect_playit_status(server_dir), None
@@ -201,7 +201,9 @@ def start_playit_agent(
     log_path = server_dir / ".msm.playit.log"
     log_handle = log_path.open("a", encoding="utf-8")
     socket_file = server_dir / ".msm.playit.sock"
-    command = build_playit_start_command(resolved, secret_path=secret_file, socket_path=socket_file)
+    command = build_playit_start_command(
+        resolved, secret_path=secret_file, socket_path=socket_file
+    )
     process = subprocess.Popen(
         command,
         cwd=server_dir,
@@ -222,11 +224,14 @@ def start_playit_agent(
         log_handle.flush()
         log_handle.close()
         tail = read_playit_log_tail(server_dir, line_count=10)
-        return TunnelStatus(
-            provider="playit",
-            state=TUNNEL_STATUS_FAILED,
-            message=f"Playit exited immediately (code {exit_code}). {tail}",
-        ), None
+        return (
+            TunnelStatus(
+                provider="playit",
+                state=TUNNEL_STATUS_FAILED,
+                message=f"Playit exited immediately (code {exit_code}). {tail}",
+            ),
+            None,
+        )
 
     log_handle.flush()
     status = inspect_playit_status(server_dir)
@@ -238,9 +243,7 @@ def start_playit_agent(
 # ---------------------------------------------------------------------------
 
 
-def build_playit_mapping_hint(
-    protocol: str, local_host: str, local_port: int
-) -> str:
+def build_playit_mapping_hint(protocol: str, local_host: str, local_port: int) -> str:
     """Return user-facing instructions for creating a playit tunnel mapping."""
     return (
         f"Run the Playit setup wizard to create or update this tunnel:\n"
@@ -297,8 +300,7 @@ def diagnose_playit(
                 name="PocketMine protocol",
                 ok=False,
                 detail=(
-                    "PocketMine/Bedrock requires UDP. "
-                    "Set tunnel protocol to udp."
+                    "PocketMine/Bedrock requires UDP. " "Set tunnel protocol to udp."
                 ),
             )
         )
@@ -354,9 +356,7 @@ def diagnose_playit(
         TUNNEL_STATUS_MAPPING_MISSING,
         TUNNEL_STATUS_PROCESS_RUNNING,
     ):
-        hint = build_playit_mapping_hint(
-            protocol, local_host, int(local_port)
-        )
+        hint = build_playit_mapping_hint(protocol, local_host, int(local_port))
         checks.append(
             TunnelCheck(
                 name="Mapping hint",
