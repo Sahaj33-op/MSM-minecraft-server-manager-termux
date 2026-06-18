@@ -168,15 +168,20 @@ prepare_checkout() {
     if using_current_checkout; then
         INSTALL_DIR="$(pwd)"
         log_info "Using current checkout: ${INSTALL_DIR}"
-        return
+    else
+        INSTALL_DIR="${MSM_INSTALL_DIR:-${TARGET_HOME}/${REPO_DIR}}"
+        if [ -f "${INSTALL_DIR}/msm.py" ] && [ -f "${INSTALL_DIR}/requirements.txt" ]; then
+            log_info "Reusing existing checkout: ${INSTALL_DIR}"
+        else
+            log_info "Cloning MSM into ${INSTALL_DIR}..."
+            as_install_user git clone "${REPO_URL}" "${INSTALL_DIR}"
+        fi
     fi
 
-    INSTALL_DIR="${MSM_INSTALL_DIR:-${TARGET_HOME}/${REPO_DIR}}"
-    if [ -f "${INSTALL_DIR}/msm.py" ] && [ -f "${INSTALL_DIR}/requirements.txt" ]; then
-        log_info "Reusing existing checkout: ${INSTALL_DIR}"
-    else
-        log_info "Cloning MSM into ${INSTALL_DIR}..."
-        as_install_user git clone "${REPO_URL}" "${INSTALL_DIR}"
+    # Fix ownership of the installation directory if it exists and we are not root
+    if [ -d "${INSTALL_DIR}" ] && [ "$(id -u)" -ne 0 ] && [ "${#SUDO_CMD[@]}" -ne 0 ]; then
+        log_info "Ensuring correct ownership of ${INSTALL_DIR}..."
+        priv chown -R "$(id -u):$(id -g)" "${INSTALL_DIR}"
     fi
 
     cd "${INSTALL_DIR}"
@@ -194,6 +199,11 @@ configure_python_environment() {
     fi
 
     log_info "Creating Python virtual environment..."
+    # If .venv exists but isn't writable, remove it with privileges
+    if [ -d ".venv" ] && [ ! -w ".venv" ]; then
+        log_info "Removing unwritable .venv..."
+        priv rm -rf .venv
+    fi
     as_install_user "${python_bin}" -m venv "${venv_args[@]}" .venv
 
     log_info "Installing Python dependencies..."
