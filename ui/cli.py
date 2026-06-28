@@ -667,6 +667,9 @@ def playit_setup_wizard(
                                     )
                                     stored_secret = fallback_secret
                         
+                        # Variable to track if we should keep the daemon alive
+                        keep_daemon_alive = False
+
                         if (
                             exchange_result
                             and exchange_result.returncode == 0
@@ -677,6 +680,7 @@ def playit_setup_wizard(
                                     "SUCCESS",
                                     f"Playit agent linked for {current_server} via socket!",
                                 )
+                                keep_daemon_alive = True
                             else:
                                 logger.log(
                                     "SUCCESS",
@@ -693,36 +697,58 @@ def playit_setup_wizard(
                             if exchange_output:
                                 logger.log("INFO", exchange_output)
             finally:
-                if daemon:
+                # Terminate daemon only if we shouldn't keep it alive
+                if daemon and not keep_daemon_alive:
                     daemon.terminate()
                     daemon.wait(timeout=5)
                 if 'daemon_log_file' in locals():
                     daemon_log_file.close()
-                # Clean up temporary log file
-                if 'daemon_log_path' in locals() and daemon_log_path.exists():
+                # Clean up temporary log file only if we're not keeping daemon alive
+                if not keep_daemon_alive and 'daemon_log_path' in locals() and daemon_log_path.exists():
                     try:
                         daemon_log_path.unlink()
                     except Exception:
                         pass
 
-    if read_text_file(instance.playit_secret_file):
-        auto_map = (
-            input("Create or update the Playit tunnel for this server now? (Y/n): ")
-            .strip()
-            .lower()
-            != "n"
+    # Save config first with enabled=True temporarily if we kept daemon alive
+    if playit_version and playit_version.startswith("1.") and 'daemon' in locals() and daemon and daemon.poll() is None:
+        # Save tunnel config as enabled
+        save_tunnel_config(
+            instance,
+            config_manager,
+            current_server,
+            provider="playit",
+            binary_path=binary_path,
+            enabled=True,
+            logger=logger,
+            playit_version=playit_version,
         )
-        if auto_map:
-            configure_playit_api_tunnel(
-                instance,
-                config_manager,
-                current_server,
-                logger,
-            )
+        # Now we need to properly persist the running daemon as part of instance's tunnel
+        # First, let's write a pid file for our temporarily running daemon
+        write_text_file(instance.server_dir / ".msm.playit.pid", str(daemon.pid))
+        # Let's also move/copy the temp log file to the real one if needed
+        if 'daemon_log_path' in locals() and daemon_log_path.exists():
+            real_log_path = instance.server_dir / ".msm.playit.log"
+            shutil.copy(daemon_log_path, real_log_path)
+        # Tell user to finish tunnel setup in Playit's web UI
+        logger.log(
+            "INFO",
+            "Playit agent is running! You can configure your tunnel in the Playit web portal at https://playit.gg/account/agents",
+        )
+    elif read_text_file(instance.playit_secret_file):
+        logger.log(
+            "INFO",
+            "You can configure your Playit tunnel in the Playit web portal at https://playit.gg/account/agents",
+        )
 
-    enable_tunnel = (
-        input("Enable playit for this server? (Y/n): ").strip().lower() != "n"
-    )
+    # Only prompt to enable tunnel if we didn't already keep the daemon alive
+    if not (playit_version and playit_version.startswith("1.") and 'daemon' in locals() and daemon and daemon.poll() is None):
+        enable_tunnel = (
+            input("Enable playit for this server? (Y/n): ").strip().lower() != "n"
+        )
+    else:
+        enable_tunnel = True
+
     save_tunnel_config(
         instance,
         config_manager,
