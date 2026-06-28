@@ -439,6 +439,28 @@ class ServerInstance:
             self.set_eula(True)
         return artifact
 
+    def _launch_process(self) -> int | None:
+        startup_command = self.build_startup_command()
+        launch_command = build_screen_launch_command(
+            self.screen_name,
+            startup_command,
+            self.pid_file,
+        )
+        started = run_command(launch_command, logger=self.logger, cwd=self.server_dir)
+        if not started:
+            return None
+        pid = wait_for_pid_file(self.pid_file)
+        if not pid:
+            return None
+        _config, server_config = self.refresh_config()
+        session_id = self.db_manager.log_session_start(
+            self.server_name,
+            server_config["server_flavor"],
+            server_config["server_version"],
+        )
+        write_text_file(self.session_file, str(session_id))
+        return pid
+
     def start(self) -> bool:
         with self._lock:
             if self.is_running():
@@ -450,33 +472,10 @@ class ServerInstance:
             self.monitor_stop_event = threading.Event()
             self.auto_restart_stop_event = threading.Event()
             self.backup_stop_event = threading.Event()
-            startup_command = self.build_startup_command()
-            launch_command = build_screen_launch_command(
-                self.screen_name,
-                startup_command,
-                self.pid_file,
-            )
-            started = run_command(
-                launch_command, logger=self.logger, cwd=self.server_dir
-            )
-            if not started:
-                self.logger.log(
-                    "ERROR", f"Failed to start {self.server_name} in screen."
-                )
-                return False
-            pid = wait_for_pid_file(self.pid_file)
+            pid = self._launch_process()
             if not pid:
-                self.logger.log(
-                    "ERROR", f"Unable to determine a PID for {self.server_name}."
-                )
+                self.logger.log("ERROR", f"Failed to start {self.server_name}.")
                 return False
-            _config, server_config = self.refresh_config()
-            session_id = self.db_manager.log_session_start(
-                self.server_name,
-                server_config["server_flavor"],
-                server_config["server_version"],
-            )
-            write_text_file(self.session_file, str(session_id))
             self.logger.log("SUCCESS", f"Started {self.server_name}", pid=pid)
             self.resume_background_services()
             return True
@@ -720,27 +719,9 @@ class ServerInstance:
             if self.auto_restart_stop_event.is_set() or self._manual_stop_requested:
                 break
             try:
-                startup_command = self.build_startup_command()
-                launch_command = build_screen_launch_command(
-                    self.screen_name,
-                    startup_command,
-                    self.pid_file,
-                )
-                started = run_command(
-                    launch_command, logger=self.logger, cwd=self.server_dir
-                )
-                if not started:
-                    continue
-                pid = wait_for_pid_file(self.pid_file)
+                pid = self._launch_process()
                 if not pid:
                     continue
-                _config, server_config = self.refresh_config()
-                session_id = self.db_manager.log_session_start(
-                    self.server_name,
-                    server_config["server_flavor"],
-                    server_config["server_version"],
-                )
-                write_text_file(self.session_file, str(session_id))
                 self.logger.log(
                     "SUCCESS", f"Auto-restarted {self.server_name}", pid=pid
                 )

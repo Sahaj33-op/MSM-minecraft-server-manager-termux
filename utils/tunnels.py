@@ -32,14 +32,31 @@ PLAYIT_CLAIM_URL_PATTERN = re.compile(
 )
 
 
-ANSI_ESCAPE_PATTERN = re.compile(r'\x1B(?:\[[0-9;]*[a-zA-Z]|\(B|\)0|#\d|[=>]|7|8)')
+ANSI_ESCAPE_PATTERN = re.compile(r"\x1B(?:\[[0-9;]*[a-zA-Z]|\(B|\)0|#\d|[=>]|7|8)")
+
 
 def extract_last_non_empty_line(text: str) -> str | None:
-    text = ANSI_ESCAPE_PATTERN.sub('', text)
+    text = ANSI_ESCAPE_PATTERN.sub("", text)
     for line in reversed(text.splitlines()):
         stripped = line.strip()
         if stripped:
             return stripped
+    return None
+
+
+def get_playit_version(binary_path: str | Path) -> str | None:
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            [str(binary_path), "--version"], capture_output=True, text=True, timeout=5
+        )
+        for line in (result.stdout + "\n" + result.stderr).splitlines():
+            if "playit" in line.lower():
+                parts = line.strip().split()
+                return parts[-1]
+    except Exception:
+        pass
     return None
 
 
@@ -68,15 +85,18 @@ def build_playit_claim_exchange_command(
     claim_code: str,
     secret_path: str | Path | None = None,
     socket_path: str | Path | None = None,
+    playit_version: str | None = None,
 ) -> list[str]:
     command = [str(binary_path)]
     if socket_path and Path(binary_path).name == "playit-cli":
         command.extend(["--socket-path", str(socket_path)])
-    # In 1.0.6+, playit-cli does not accept --secret-path. The daemon manages it via IPC.
-    # We still accept secret_path for backwards compatibility with older playit versions if needed,
-    # but playit 0.15 uses --secret_path while 1.0.6 uses --socket-path
     if secret_path and not socket_path:
-        command.extend(["--secret_path", str(secret_path)])
+        secret_flag = (
+            "--secret-path"
+            if playit_version and playit_version.startswith("1.")
+            else "--secret_path"
+        )
+        command.extend([secret_flag, str(secret_path)])
     command.extend(["claim", "exchange", claim_code])
     return command
 
@@ -96,6 +116,7 @@ def build_playit_start_command(
     binary_path: str | Path,
     secret_path: str | Path | None = None,
     socket_path: str | Path | None = None,
+    playit_version: str | None = None,
 ) -> list[str]:
     bin_name = Path(binary_path).name
     if bin_name == "playitd":
@@ -108,7 +129,12 @@ def build_playit_start_command(
 
     command = [str(binary_path), "--stdout"]
     if secret_path:
-        command.extend(["--secret_path", str(secret_path)])
+        secret_flag = (
+            "--secret-path"
+            if playit_version and playit_version.startswith("1.")
+            else "--secret_path"
+        )
+        command.extend([secret_flag, str(secret_path)])
     command.append("start")
     return command
 

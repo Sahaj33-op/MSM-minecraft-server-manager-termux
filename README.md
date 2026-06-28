@@ -213,18 +213,40 @@ python msm.py
 
 ---
 
-## Basic Workflow
+## 60-Second Quick Start
 
-```
-1. python msm.py          -> launch MSM (checks for screen on startup)
-2. Create server profile  -> name sanitized to [a-zA-Z0-9_.-]
-3. Install binary         -> fetched from upstream API into ~/minecraft-<n>/
-4. Configure server       -> RAM, port, RCON, tunnel, backup interval
-5. Start server           -> spawns in screen session named mc_<n>
-6. Manage live            -> console attach, commands, stats, world backups
+Get your first server running from scratch in under a minute (after installation):
+
+```bash
+# 1. Launch MSM
+python msm.py
+
+# 2. Name your server (e.g., "my_world")
+# 3. Choose "Paper" for great performance and plugin support
+# 4. Pick the latest version (e.g., "1.21.1")
+# 5. Accept the default RAM allocation
+# 6. Type 'Y' to start the server immediately
+# 7. Press 's' at the main menu for "Quick Share" to get a public link!
 ```
 
 ---
+
+## Basic Workflow
+
+```mermaid
+graph TD
+    A[Launch MSM] --> B{Servers configured?}
+    B -- No --> C[First-Run Wizard]
+    B -- Yes --> D[Main Menu]
+    C --> E[Name Server]
+    E --> F[Select Flavor & Version]
+    F --> G[Allocate RAM]
+    G --> H[Start Server]
+    H --> D
+    D --> I[Manage Live Server]
+    D --> J[Configure Properties/Tunnel]
+    D --> K[World Backups]
+```
 
 ## CLI Menu Reference
 
@@ -688,6 +710,16 @@ Test temporaries go to `.test_tmp/` (gitignored; cleaned up per test).
 - **Live metrics:** TPS, MSPT, and player counts are not collected. The SQLite schema has `tps`, `mspt`, and `player_count` columns, but the monitor loop does not populate them.
 - **Platform:** `screen` and POSIX process behavior are hard dependencies. Unit tests and CI run cross-platform; actual server hosting does not.
 - **HTTP reliability:** `requests` retries 5 times with backoff factor 2 on 429/5xx. Aggressive upstream rate-limiting may still cause install failures on slow connections.
+
+---
+
+## Glossary of Terms
+
+- **Flavor:** The type of Minecraft server software. *Vanilla* is the official release. *Paper* and *Purpur* are highly optimized versions that support plugins.
+- **RCON:** Remote Console. A protocol that allows external tools (like MSM) to securely send commands to the Minecraft server.
+- **TCP/UDP:** Network protocols. Java Edition uses TCP. Bedrock/PocketMine uses UDP. Tunnels must match the protocol.
+- **Screen Session:** A background terminal. MSM runs your server inside `screen`, meaning you can close MSM or disconnect from SSH, and the server will keep running.
+- **Tunnel:** A service (like playit.gg or ngrok) that gives your server a public internet address without needing to configure port forwarding on your home router.
 
 ---
 

@@ -42,16 +42,23 @@ def create_backup_archive(
     server_path = Path(server_dir)
     archive_path = Path(backup_path)
     archive_path.parent.mkdir(parents=True, exist_ok=True)
+
+    all_files = []
+    for world_dir in world_dirs:
+        for file_path in world_dir.rglob("*"):
+            if file_path.is_file():
+                all_files.append(file_path)
+
+    from tqdm import tqdm
+
     with zipfile.ZipFile(
         archive_path,
         "w",
         compression=BACKUP_COMPRESSION,
         compresslevel=BACKUP_COMPRESSION_LEVEL,
     ) as archive:
-        for world_dir in world_dirs:
-            for file_path in world_dir.rglob("*"):
-                if file_path.is_file():
-                    archive.write(file_path, file_path.relative_to(server_path))
+        for file_path in tqdm(all_files, desc="Backing up", unit="file", leave=False):
+            archive.write(file_path, file_path.relative_to(server_path))
     return archive_path.stat().st_size
 
 

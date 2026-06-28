@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import threading
 import time
 from pathlib import Path
 
@@ -77,33 +76,6 @@ def format_duration(seconds: float | int | None) -> str:
     return f"{days}d {hours}h {minutes}m"
 
 
-def run_with_spinner(message: str, func, *args, **kwargs):
-    state = {"done": False, "result": None, "error": None}
-
-    def worker() -> None:
-        try:
-            state["result"] = func(*args, **kwargs)
-        except Exception as exc:  # pragma: no cover - presentation glue
-            state["error"] = exc
-        finally:
-            state["done"] = True
-
-    thread = threading.Thread(target=worker, daemon=True)
-    thread.start()
-
-    spinner = "|/-\\"
-    index = 0
-    while not state["done"]:
-        print(f"\r{message} {spinner[index % len(spinner)]}", end="", flush=True)
-        time.sleep(0.1)
-        index += 1
-    print("\r" + (" " * (len(message) + 4)) + "\r", end="", flush=True)
-
-    if state["error"]:
-        raise state["error"]
-    return state["result"]
-
-
 def create_services():
     logger = EnhancedLogger(LOG_FILE, MAX_LOG_SIZE, LOG_RETENTION_DAYS)
     config_manager = ConfigManager(CONFIG_FILE, logger)
@@ -120,22 +92,45 @@ def ensure_current_server(config_manager: ConfigManager) -> dict:
     return config
 
 
+MSM_LOGO = r"""
+  __  __  _____  __  __ 
+ |  \/  |/ ____||  \/  |
+ | \  / | (___  | \  / |
+ | |\/| |\___ \ | |\/| |
+ | |  | |____) || |  | |
+ |_|  |_|_____/ |_|  |_|
+"""
+
+
 def print_header(current_server: str | None, runtime: RuntimeManager) -> None:
     clear_screen()
     system_info = get_system_info()
     running_servers = runtime.running_servers()
     ram_usage = f"{system_info['available_ram_mb']}MB/{system_info['total_ram_mb']}MB"
     cpu_info = f"{system_info['cpu_count']} cores @ {system_info['cpu_usage']:.1f}%"
-    print(f"{C.BOLD}{C.CYAN}{'=' * 72}{C.RESET}")
-    print(f"{C.BOLD}{C.CYAN}Minecraft Server Manager v{VERSION}{C.RESET}")
+
+    print(f"{C.BOLD}{C.GRASS_GREEN}{MSM_LOGO}{C.RESET}")
     print(
-        f"{C.DIM}RAM: {ram_usage} | CPU: {cpu_info} "
-        f"| Platform: {system_info['platform']}{C.RESET}"
+        f"{C.BOLD}{C.DIRT_BROWN}MSM: Your Minecraft World, In Your Pocket. (v{VERSION}){C.RESET}"
     )
-    print(f"{C.DIM}Running servers: {len(running_servers)}{C.RESET}")
+    print(f"{C.BOLD}{C.DIAMOND_CYAN}┌{'─' * 70}┐{C.RESET}")
+    print(
+        f"{C.BOLD}{C.DIAMOND_CYAN}│{C.RESET} {C.DIM}RAM: {ram_usage:<20} | CPU: {cpu_info:<20} {C.BOLD}{C.DIAMOND_CYAN}│{C.RESET}"
+    )
+    print(
+        f"{C.BOLD}{C.DIAMOND_CYAN}│{C.RESET} {C.DIM}Running servers: {len(running_servers):<43} {C.BOLD}{C.DIAMOND_CYAN}│{C.RESET}"
+    )
     if current_server:
-        print(f"{C.DIM}Current server: {current_server}{C.RESET}")
-    print(f"{C.BOLD}{C.CYAN}{'=' * 72}{C.RESET}\n")
+        instance = runtime.get_instance(current_server)
+        status_color = C.GRASS_GREEN if instance.is_running() else C.RED
+        status_text = "Running" if instance.is_running() else "Stopped"
+        line_content = f"{C.DIM}Current server: {C.RESET}{C.BOLD}{current_server} [{status_color}{status_text}{C.RESET}]"
+        print(
+            f"{C.BOLD}{C.DIAMOND_CYAN}│{C.RESET} "
+            + line_content.ljust(81)
+            + f"{C.BOLD}{C.DIAMOND_CYAN}│{C.RESET}"
+        )
+    print(f"{C.BOLD}{C.DIAMOND_CYAN}└{'─' * 70}┘{C.RESET}\n")
 
 
 def print_connection_summary(instance) -> None:
@@ -178,6 +173,7 @@ def save_tunnel_config(
     protocol: str | None = None,
     local_host: str | None = None,
     local_port: int | None = None,
+    playit_version: str | None = None,
 ) -> None:
     def updater(saved_config: dict) -> None:
         tunnel = saved_config["servers"][current_server].setdefault("tunnel", {})
@@ -191,6 +187,8 @@ def save_tunnel_config(
             tunnel["local_host"] = local_host
         if local_port is not None:
             tunnel["local_port"] = local_port
+        if playit_version is not None:
+            tunnel["playit_version"] = playit_version
 
     config_manager.mutate(updater)
     if instance.is_running():
@@ -460,10 +458,14 @@ def playit_setup_wizard(
         current_binary
     )
     from utils.playit import resolve_playit_binary
+    from utils.tunnels import get_playit_version
 
     resolved_binary = resolve_playit_binary(binary_path)
+    playit_version = None
     if resolved_binary:
-        logger.log("INFO", f"Using playit binary at {resolved_binary}")
+        playit_version = get_playit_version(resolved_binary)
+        version_str = f" (v{playit_version})" if playit_version else ""
+        logger.log("INFO", f"Using playit binary at {resolved_binary}{version_str}")
     else:
         logger.log(
             "WARNING", f"Playit binary '{binary_path}' was not found on this device."
@@ -688,6 +690,7 @@ def playit_setup_wizard(
         binary_path=binary_path,
         enabled=enable_tunnel,
         logger=logger,
+        playit_version=playit_version,
     )
     pause()
 
@@ -719,7 +722,9 @@ def tunnel_setup_wizard(
         print(" 6. Disable tunnel for this server")
         print(" 0. Back")
 
-        choice = input(f"\n{C.BOLD}Choose action: {C.RESET}").strip()
+        choice = input(
+            f"\n{C.BOLD}{C.DIAMOND_CYAN}MSM> Choose action: {C.RESET}"
+        ).strip()
         if choice == "0":
             return
         if choice == "1":
@@ -763,6 +768,74 @@ def tunnel_setup_wizard(
         pause()
 
 
+def first_run_wizard(
+    runtime: RuntimeManager, config_manager: ConfigManager, logger
+) -> None:
+    print_header(None, runtime)
+    print(
+        f"{C.BOLD}{C.DIAMOND_CYAN}Welcome to MSM! Let's get your first server running.{C.RESET}\n"
+    )
+    name = input(
+        f"{C.BOLD}{C.DIAMOND_CYAN}MSM> Enter a name for your server: {C.RESET}"
+    ).strip()
+    if not name:
+        logger.log("ERROR", "Server name cannot be empty.")
+        return
+    sanitized_name = sanitize_input(name)
+    config_manager.ensure_server(sanitized_name)
+    get_server_dir(sanitized_name).mkdir(parents=True, exist_ok=True)
+    logger.log("SUCCESS", f"Created server '{sanitized_name}'.")
+
+    config = config_manager.load()
+    config["current_server"] = sanitized_name
+    config_manager.save(config)
+
+    print("\nNext, let's choose a server type (flavor).")
+    flavor = select_server_flavor()
+    if not flavor:
+        return
+    version, version_info = select_server_version(flavor, logger)
+    if not version or not version_info:
+        return
+
+    instance = runtime.get_instance(sanitized_name)
+    print(f"{C.DIM}Downloading {SERVER_FLAVORS[flavor]['name']} {version}...{C.RESET}")
+    artifact = instance.install_binary(flavor, version, version_info)
+
+    system_info = get_system_info()
+    safe_ram = int(system_info["available_ram_mb"] * 0.75)
+    safe_ram = max(512, min(safe_ram, 8192))
+    print(f"\nMSM detected {system_info['available_ram_mb']}MB of available RAM.")
+    ram_input = input(
+        f"{C.BOLD}{C.DIAMOND_CYAN}MSM> Allocate RAM (MB) [{safe_ram}]: {C.RESET}"
+    ).strip()
+    allocated_ram = int(ram_input) if ram_input.isdigit() else safe_ram
+
+    def updater(saved_config: dict) -> None:
+        server_config = saved_config["servers"][sanitized_name]
+        server_config["server_flavor"] = flavor
+        server_config["server_version"] = version
+        server_config["ram_mb"] = allocated_ram
+        server_config["server_settings"]["port"] = SERVER_FLAVORS[flavor][
+            "default_port"
+        ]
+
+    config_manager.mutate(updater)
+    instance.apply_server_files()
+    logger.log("SUCCESS", f"Installed {artifact.name} with {allocated_ram}MB RAM.")
+
+    print("\nYour server is ready!")
+    start_now = (
+        input(f"{C.BOLD}{C.DIAMOND_CYAN}MSM> Start server now? (Y/n): {C.RESET}")
+        .strip()
+        .lower()
+    )
+    if start_now != "n":
+        started = instance.start()
+        if started:
+            instance.print_connection_details()
+
+
 def create_new_server(config_manager: ConfigManager, logger) -> None:
     name = input(f"{C.BOLD}Enter a new server name: {C.RESET}").strip()
     if not name:
@@ -787,7 +860,7 @@ def select_current_server(config_manager: ConfigManager, logger) -> None:
     print(f"{C.BOLD}Configured servers:{C.RESET}")
     for index, server_name in enumerate(servers, start=1):
         print(f" {index}. {server_name}")
-    choice = input(f"\n{C.BOLD}Choose server: {C.RESET}").strip()
+    choice = input(f"\n{C.BOLD}{C.DIAMOND_CYAN}MSM> Choose server: {C.RESET}").strip()
     if not choice.isdigit():
         logger.log("ERROR", "Selection must be a number.")
         return
@@ -806,7 +879,7 @@ def select_server_flavor() -> str | None:
     for index, flavor in enumerate(flavors, start=1):
         details = SERVER_FLAVORS[flavor]
         print(f" {index}. {details['name']} - {details['description']}")
-    choice = input(f"\n{C.BOLD}Choose flavor: {C.RESET}").strip()
+    choice = input(f"\n{C.BOLD}{C.DIAMOND_CYAN}MSM> Choose flavor: {C.RESET}").strip()
     if not choice.isdigit():
         return None
     selection = int(choice) - 1
@@ -886,13 +959,8 @@ def install_server(
     if not version or not version_info:
         return
     instance = runtime.get_instance(current_server)
-    artifact = run_with_spinner(
-        f"Downloading {SERVER_FLAVORS[flavor]['name']} {version}",
-        instance.install_binary,
-        flavor,
-        version,
-        version_info,
-    )
+    print(f"{C.DIM}Downloading {SERVER_FLAVORS[flavor]['name']} {version}...{C.RESET}")
+    artifact = instance.install_binary(flavor, version, version_info)
 
     def updater(saved_config: dict) -> None:
         server_config = saved_config["servers"][current_server]
@@ -905,6 +973,31 @@ def install_server(
     config_manager.mutate(updater)
     instance.apply_server_files()
     logger.log("SUCCESS", f"Installed {artifact.name} for '{current_server}'.")
+
+
+def print_configuration_help() -> None:
+    print(f"\n{C.BOLD}Configuration Help{C.RESET}")
+    print(
+        " 1. RAM MB: Amount of memory dedicated to the server. Higher is better, up to 80% of device RAM."
+    )
+    print(
+        " 2. Port: The network port players use to connect. Default is 25565 (or 19132 for PocketMine)."
+    )
+    print(" 3. Auto restart: Automatically restarts the server if it crashes.")
+    print(
+        " 4. MOTD: The 'Message of the Day' displayed in the multiplayer server list."
+    )
+    print(" 5. Max players: Maximum concurrent players allowed on the server.")
+    print(
+        " 6. Online mode: 'true' checks with Mojang for premium accounts. 'false' allows offline/cracked players."
+    )
+    print(" 7-8. Backups: Automatically zips your world folder at the chosen interval.")
+    print(
+        " 9-15. Tunnel: Uses ngrok or playit.gg to expose your server to the internet without port forwarding."
+    )
+    print(
+        " 16-17. RCON: Remote console access. Allows other tools to send commands to your server."
+    )
 
 
 def configure_server(
@@ -947,8 +1040,15 @@ def configure_server(
         print(f"16. RCON enabled: {server_config['rcon']['enabled']}")
         print(f"17. RCON password set: {bool(server_config['rcon']['password'])}")
         print(" 0. Back")
+        print(" ?. Help")
 
-        choice = input(f"\n{C.BOLD}Choose setting: {C.RESET}").strip()
+        choice = input(
+            f"\n{C.BOLD}{C.DIAMOND_CYAN}MSM> Choose setting: {C.RESET}"
+        ).strip()
+        if choice in ("?", "help"):
+            print_configuration_help()
+            pause()
+            continue
         if choice == "0":
             return
         try:
@@ -1226,7 +1326,9 @@ def edit_server_files(
         print(" 4. Toggle EULA")
         print(" 0. Back")
 
-        choice = input(f"\n{C.BOLD}Choose action: {C.RESET}").strip()
+        choice = input(
+            f"\n{C.BOLD}{C.DIAMOND_CYAN}MSM> Choose action: {C.RESET}"
+        ).strip()
         if choice == "0":
             return
         if choice == "1":
@@ -1276,7 +1378,7 @@ def choose_backup(instance, logger) -> Path | None:
         return None
     for index, backup in enumerate(backups, start=1):
         print(f" {index}. {backup.name} ({format_bytes(backup.stat().st_size)})")
-    choice = input(f"\n{C.BOLD}Choose backup: {C.RESET}").strip()
+    choice = input(f"\n{C.BOLD}{C.DIAMOND_CYAN}MSM> Choose backup: {C.RESET}").strip()
     if not choice.isdigit():
         logger.log("ERROR", "Backup selection must be numeric.")
         return None
@@ -1306,14 +1408,15 @@ def world_manager(
         print(" 4. Delete backup")
         print(" 0. Back")
 
-        choice = input(f"\n{C.BOLD}Choose action: {C.RESET}").strip()
+        choice = input(
+            f"\n{C.BOLD}{C.DIAMOND_CYAN}MSM> Choose action: {C.RESET}"
+        ).strip()
         if choice == "0":
             return
         if choice == "1":
             try:
-                backup_path = run_with_spinner(
-                    "Creating backup", instance.create_backup
-                )
+                print(f"{C.DIM}Creating backup...{C.RESET}")
+                backup_path = instance.create_backup()
                 logger.log("SUCCESS", f"Backup saved to {backup_path}")
             except Exception as exc:
                 logger.log("ERROR", f"Backup failed: {exc}")
@@ -1341,9 +1444,8 @@ def world_manager(
                 pause()
                 continue
             try:
-                run_with_spinner(
-                    "Restoring backup", instance.restore_backup, backup_path.name
-                )
+                print(f"{C.DIM}Restoring backup {backup_path.name}...{C.RESET}")
+                instance.restore_backup(backup_path.name)
             except Exception as exc:
                 logger.log("ERROR", f"Restore failed: {exc}")
             pause()
@@ -1428,13 +1530,41 @@ def send_command_menu(
         print_header(current_server, runtime)
         print(f"{C.BOLD}Send command to {current_server}{C.RESET}")
         print(" Leave blank to return.")
-        command = input("> ").strip()
+        command = input(f"{C.BOLD}{C.DIAMOND_CYAN}MSM> {C.RESET}").strip()
         if not command:
             return
         success = instance.send_command(command)
         if not success:
             logger.log("ERROR", "Command delivery failed.")
         time.sleep(1)
+
+
+def quick_share(
+    runtime: RuntimeManager, config_manager: ConfigManager, current_server: str, logger
+) -> None:
+    instance = runtime.get_instance(current_server)
+    info = instance.get_connection_info()
+    if info["tunnel_enabled"] and info["tunnel_url"]:
+        print(f"\n{C.BOLD}{C.GRASS_GREEN}Your server is online!{C.RESET}")
+        print(f"{C.BOLD}Share this address with friends:{C.RESET}")
+        print(f"\n   {C.BOLD}{C.DIAMOND_CYAN}{info['tunnel_url']}{C.RESET}\n")
+
+        if running_on_termux() and shutil.which("termux-clipboard-set"):
+            try:
+                subprocess.run(
+                    ["termux-clipboard-set", info["tunnel_url"]], check=False
+                )
+                print(f"{C.DIM}Copied to clipboard!{C.RESET}")
+            except Exception:
+                pass
+    else:
+        print(f"\n{C.BOLD}Quick Share Setup{C.RESET}")
+        print(
+            "A tunnel makes your server accessible over the internet without port forwarding."
+        )
+        choice = input("Set up a Playit tunnel now? (Y/n): ").strip().lower()
+        if choice != "n":
+            playit_setup_wizard(runtime, config_manager, current_server, logger)
 
 
 def main() -> None:
@@ -1445,9 +1575,7 @@ def main() -> None:
     while True:
         config = ensure_current_server(config_manager)
         if not config.get("servers"):
-            print_header(None, runtime)
-            logger.log("INFO", "No servers found. Create one to begin.")
-            create_new_server(config_manager, logger)
+            first_run_wizard(runtime, config_manager, logger)
             pause()
             continue
 
@@ -1484,9 +1612,14 @@ def main() -> None:
         print(" 9. Statistics")
         print("10. Create new server")
         print("11. Switch server")
+        print(" s. Quick Share (Tunnel)")
         print(" 0. Exit")
 
-        choice = input(f"\n{C.BOLD}Choose action: {C.RESET}").strip()
+        choice = (
+            input(f"\n{C.BOLD}{C.DIAMOND_CYAN}MSM> Choose action: {C.RESET}")
+            .strip()
+            .lower()
+        )
         try:
             if choice == "1":
                 started = instance.start()
@@ -1517,6 +1650,9 @@ def main() -> None:
                 pause()
             elif choice == "11":
                 select_current_server(config_manager, logger)
+                pause()
+            elif choice == "s":
+                quick_share(runtime, config_manager, current_server, logger)
                 pause()
             elif choice == "0":
                 if runtime.running_servers():

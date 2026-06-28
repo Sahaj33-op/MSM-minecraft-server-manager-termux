@@ -74,11 +74,11 @@ def is_snapshot_version(version: str) -> bool:
 
 
 def _fetch_paper_build(
+    session: requests.Session,
     api_base: str,
     version: str,
     logger=None,
 ) -> tuple[str, dict[str, Any]] | None:
-    session = create_robust_session()
     try:
         response = safe_request(
             session,
@@ -102,16 +102,16 @@ def _fetch_paper_build(
                 "is_snapshot": is_snapshot_version(version),
             },
         )
-    finally:
-        session.close()
+    except requests.RequestException:
+        pass
 
 
 def _fetch_purpur_build(
+    session: requests.Session,
     api_base: str,
     version: str,
     logger=None,
 ) -> tuple[str, dict[str, Any]] | None:
-    session = create_robust_session()
     try:
         response = safe_request(session, "GET", f"{api_base}/{version}", logger=logger)
         if not response:
@@ -127,8 +127,8 @@ def _fetch_purpur_build(
                 "is_snapshot": is_snapshot_version(version),
             },
         )
-    finally:
-        session.close()
+    except requests.RequestException:
+        pass
 
 
 def get_paper_like_versions(
@@ -153,7 +153,9 @@ def get_paper_like_versions(
             max_workers=min(8, len(selected_versions) or 1)
         ) as executor:
             futures = {
-                executor.submit(_fetch_paper_build, api_base, version, logger): version
+                executor.submit(
+                    _fetch_paper_build, session, api_base, version, logger
+                ): version
                 for version in selected_versions
             }
             for future in as_completed(futures):
@@ -192,7 +194,9 @@ def get_purpur_versions(
             max_workers=min(8, len(selected_versions) or 1)
         ) as executor:
             futures = {
-                executor.submit(_fetch_purpur_build, api_base, version, logger): version
+                executor.submit(
+                    _fetch_purpur_build, session, api_base, version, logger
+                ): version
                 for version in selected_versions
             }
             for future in as_completed(futures):
@@ -419,10 +423,22 @@ def download_server_binary(
         if not response:
             raise RuntimeError(f"Download failed for {download_url}")
         target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        total_size = int(response.headers.get("content-length", 0))
+        from tqdm import tqdm
+
         with target_path.open("wb") as handle:
-            for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
-                if chunk:
-                    handle.write(chunk)
+            with tqdm(
+                total=total_size,
+                unit="B",
+                unit_scale=True,
+                desc=f"Downloading {target_filename}",
+                leave=False,
+            ) as pbar:
+                for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
+                    if chunk:
+                        handle.write(chunk)
+                        pbar.update(len(chunk))
         return target_path
     finally:
         session.close()

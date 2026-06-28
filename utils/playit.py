@@ -34,6 +34,7 @@ from utils.tunnels import (
     build_playit_start_command,
     extract_playit_claim_url,
     extract_playit_public_endpoint,
+    get_playit_version,
 )
 
 # ---------------------------------------------------------------------------
@@ -202,7 +203,10 @@ def start_playit_agent(
     log_handle = log_path.open("a", encoding="utf-8")
     socket_file = server_dir / ".msm.playit.sock"
     command = build_playit_start_command(
-        resolved, secret_path=secret_file, socket_path=socket_file
+        resolved,
+        secret_path=secret_file,
+        socket_path=socket_file,
+        playit_version=get_playit_version(resolved),
     )
     process = subprocess.Popen(
         command,

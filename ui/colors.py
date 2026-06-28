@@ -17,6 +17,10 @@ class ColorScheme:
     CYAN = "\033[96m"
     WHITE = "\033[97m"
 
+    GRASS_GREEN = "\033[38;5;46m"
+    DIRT_BROWN = "\033[38;5;130m"
+    DIAMOND_CYAN = "\033[38;5;51m"
+
     BG_RED = "\033[101m"
 
     SUCCESS = GREEN
