@@ -617,6 +617,7 @@ def playit_setup_wizard(
                                 claim_code,
                                 secret_path=instance.playit_secret_file,
                                 socket_path=socket_file,
+                                playit_version=playit_version,
                             ),
                             logger=logger,
                             check=False,

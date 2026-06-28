@@ -47,24 +47,71 @@ def extract_last_non_empty_line(text: str) -> str | None:
 def get_playit_version(binary_path: str | Path) -> str | None:
     import subprocess
 
-    try:
-        result = subprocess.run(
-            [str(binary_path), "--version"], capture_output=True, text=True, timeout=5
-        )
-        for line in (result.stdout + "\n" + result.stderr).splitlines():
-            if "playit" in line.lower():
-                parts = line.strip().split()
-                return parts[-1]
-    except Exception:
-        pass
-    return None
+    version = None
+    flags = ["--version", "-v", "version"]
+    for flag in flags:
+        try:
+            result = subprocess.run(
+                [str(binary_path), flag],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            all_output = (result.stdout + "\n" + result.stderr).strip()
+            if all_output:
+                for line in all_output.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    # Look for any numeric version pattern
+                    import re
+                    match = re.search(r"(\d+\.\d+\.\d+|\d+\.\d+)", line)
+                    if match:
+                        version = match.group(1)
+                        break
+            if version:
+                break
+        except Exception:
+            continue
+
+    # If we didn't get a version, try to infer from binary name or check what flags it accepts
+    if not version:
+        binary_name = Path(binary_path).name
+        if binary_name in ("playit-cli", "playitd"):
+            # Newer versions (1.x+) usually come as playit-cli or playitd
+            version = "1.0.0"
+        else:
+            # Check if binary accepts --secret-path or --secret_path
+            try:
+                help_result = subprocess.run(
+                    [str(binary_path), "--help"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+                help_output = help_result.stdout + help_result.stderr
+                if "--secret-path" in help_output:
+                    version = "1.0.0"
+                elif "--secret_path" in help_output:
+                    version = "0.15.0"
+                else:
+                    version = None
+            except Exception:
+                version = None
+
+    # Last resort: if binary name is "playit" (Termux repo package), assume 1.x
+    if not version and Path(binary_path).name == "playit":
+        version = "1.0.0"
+
+    return version
 
 
 def build_playit_claim_generate_command(
     binary_path: str | Path, socket_path: str | Path | None = None
 ) -> list[str]:
     cmd = [str(binary_path)]
-    if socket_path and Path(binary_path).name == "playit-cli":
+    binary_name = Path(binary_path).name
+    if socket_path and binary_name in ("playit-cli", "playitd", "playit"):
         cmd.extend(["--socket-path", str(socket_path)])
     cmd.extend(["claim", "generate"])
     return cmd
@@ -74,7 +121,8 @@ def build_playit_claim_url_command(
     binary_path: str | Path, claim_code: str, socket_path: str | Path | None = None
 ) -> list[str]:
     cmd = [str(binary_path)]
-    if socket_path and Path(binary_path).name == "playit-cli":
+    binary_name = Path(binary_path).name
+    if socket_path and binary_name in ("playit-cli", "playitd", "playit"):
         cmd.extend(["--socket-path", str(socket_path)])
     cmd.extend(["claim", "url", claim_code])
     return cmd
@@ -88,15 +136,17 @@ def build_playit_claim_exchange_command(
     playit_version: str | None = None,
 ) -> list[str]:
     command = [str(binary_path)]
-    if socket_path and Path(binary_path).name == "playit-cli":
+    binary_name = Path(binary_path).name
+
+    if socket_path and binary_name in ("playit-cli", "playitd", "playit"):
         command.extend(["--socket-path", str(socket_path)])
-    if secret_path and not socket_path:
-        secret_flag = (
-            "--secret-path"
-            if playit_version and playit_version.startswith("1.")
-            else "--secret_path"
-        )
-        command.extend([secret_flag, str(secret_path)])
+    elif secret_path:
+        # Only use --secret-path or --secret_path if socket_path isn't provided
+        if playit_version and playit_version.startswith("1."):
+            command.extend(["--secret-path", str(secret_path)])
+        else:
+            command.extend(["--secret_path", str(secret_path)])
+
     command.extend(["claim", "exchange", claim_code])
     return command
 
@@ -106,7 +156,8 @@ def build_playit_setup_command(
     socket_path: str | Path | None = None,
 ) -> list[str]:
     command = [str(binary_path)]
-    if socket_path and Path(binary_path).name == "playit-cli":
+    binary_name = Path(binary_path).name
+    if socket_path and binary_name in ("playit-cli", "playitd", "playit"):
         command.extend(["--socket-path", str(socket_path)])
     command.append("setup")
     return command
@@ -118,8 +169,8 @@ def build_playit_start_command(
     socket_path: str | Path | None = None,
     playit_version: str | None = None,
 ) -> list[str]:
-    bin_name = Path(binary_path).name
-    if bin_name == "playitd":
+    binary_name = Path(binary_path).name
+    if binary_name == "playitd":
         command = [str(binary_path)]
         if secret_path:
             command.extend(["--secret-path", str(secret_path)])
