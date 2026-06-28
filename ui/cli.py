@@ -543,18 +543,35 @@ def playit_setup_wizard(
                 if playit_version and playit_version.startswith("1."):
                     # Newer versions only accept socket_path
                     daemon_args.extend(["--socket-path", str(socket_file)])
+                    daemon_args.extend(["--stdout"])
+                    daemon_args.append("start")
                 else:
                     # Older versions accept secret_path and/or socket_path
                     daemon_args.extend(["--secret-path", str(secret_file)])
                     daemon_args.extend(["--socket-path", str(socket_file)])
+                    daemon_args.append("start")
+
+                # Capture output temporarily for debugging
+                daemon_log_path = instance.server_dir / ".msm.playit.temp.log"
+                daemon_log_file = open(daemon_log_path, "w")
 
                 daemon = subprocess.Popen(
                     daemon_args,
                     cwd=instance.server_dir,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=daemon_log_file,
+                    stderr=subprocess.STDOUT,
+                    text=True,
                 )
-                time.sleep(1)  # Allow daemon to initialize socket
+                time.sleep(2)  # Give daemon extra time to initialize socket
+                
+                # Check if daemon started successfully
+                daemon_exit_code = daemon.poll()
+                if daemon_exit_code is not None:
+                    logger.log("ERROR", f"Temporary Playit daemon failed to start with code {daemon_exit_code}")
+                    if daemon_log_path.exists():
+                        logger.log("INFO", daemon_log_path.read_text())
+                    daemon_log_file.close()
+                    return
 
             try:
                 claim_generate = run_command(
@@ -678,6 +695,15 @@ def playit_setup_wizard(
             finally:
                 if daemon:
                     daemon.terminate()
+                    daemon.wait(timeout=5)
+                if 'daemon_log_file' in locals():
+                    daemon_log_file.close()
+                # Clean up temporary log file
+                if 'daemon_log_path' in locals() and daemon_log_path.exists():
+                    try:
+                        daemon_log_path.unlink()
+                    except Exception:
+                        pass
 
     if read_text_file(instance.playit_secret_file):
         auto_map = (
