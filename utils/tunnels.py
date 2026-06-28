@@ -49,6 +49,16 @@ def get_playit_version(binary_path: str | Path) -> str | None:
 
     version = None
     flags = ["--version", "-v", "version"]
+    binary_name = Path(binary_path).name
+
+    # First, try inferring from binary name for common cases
+    if binary_name in ("playit-cli", "playitd"):
+        return "1.0.0"
+    if binary_name == "playit":
+        # Last resort for Termux's default package
+        return "1.0.0"
+
+    # Try running version flags
     for flag in flags:
         try:
             result = subprocess.run(
@@ -56,15 +66,18 @@ def get_playit_version(binary_path: str | Path) -> str | None:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
             all_output = (result.stdout + "\n" + result.stderr).strip()
             if all_output:
+                import re
+
                 for line in all_output.splitlines():
                     line = line.strip()
                     if not line:
                         continue
                     # Look for any numeric version pattern
-                    import re
                     match = re.search(r"(\d+\.\d+\.\d+|\d+\.\d+)", line)
                     if match:
                         version = match.group(1)
@@ -74,34 +87,26 @@ def get_playit_version(binary_path: str | Path) -> str | None:
         except Exception:
             continue
 
-    # If we didn't get a version, try to infer from binary name or check what flags it accepts
+    # If we didn't get a version, check --help output for known flags
     if not version:
-        binary_name = Path(binary_path).name
-        if binary_name in ("playit-cli", "playitd"):
-            # Newer versions (1.x+) usually come as playit-cli or playitd
-            version = "1.0.0"
-        else:
-            # Check if binary accepts --secret-path or --secret_path
-            try:
-                help_result = subprocess.run(
-                    [str(binary_path), "--help"],
-                    capture_output=True,
-                    text=True,
-                    timeout=3,
-                )
-                help_output = help_result.stdout + help_result.stderr
-                if "--secret-path" in help_output:
-                    version = "1.0.0"
-                elif "--secret_path" in help_output:
-                    version = "0.15.0"
-                else:
-                    version = None
-            except Exception:
+        try:
+            help_result = subprocess.run(
+                [str(binary_path), "--help"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            help_output = help_result.stdout + help_result.stderr
+            if "--secret-path" in help_output:
+                version = "1.0.0"
+            elif "--secret_path" in help_output:
+                version = "0.15.0"
+            else:
                 version = None
-
-    # Last resort: if binary name is "playit" (Termux repo package), assume 1.x
-    if not version and Path(binary_path).name == "playit":
-        version = "1.0.0"
+        except Exception:
+            version = None
 
     return version
 
@@ -137,15 +142,14 @@ def build_playit_claim_exchange_command(
 ) -> list[str]:
     command = [str(binary_path)]
     binary_name = Path(binary_path).name
+    is_new_version = playit_version and playit_version.startswith("1.")
 
     if socket_path and binary_name in ("playit-cli", "playitd", "playit"):
+        # For newer versions (v1.x) that use a daemon via socket: NO secret_path
         command.extend(["--socket-path", str(socket_path)])
-    elif secret_path:
-        # Only use --secret-path or --secret_path if socket_path isn't provided
-        if playit_version and playit_version.startswith("1."):
-            command.extend(["--secret-path", str(secret_path)])
-        else:
-            command.extend(["--secret_path", str(secret_path)])
+    elif secret_path and not is_new_version:
+        # For older v0.x versions or when version is unknown, use secret_path
+        command.extend(["--secret_path", str(secret_path)])
 
     command.extend(["claim", "exchange", claim_code])
     return command
@@ -170,22 +174,33 @@ def build_playit_start_command(
     playit_version: str | None = None,
 ) -> list[str]:
     binary_name = Path(binary_path).name
+    is_new_version = playit_version and playit_version.startswith("1.")
+
     if binary_name == "playitd":
         command = [str(binary_path)]
-        if secret_path:
-            command.extend(["--secret-path", str(secret_path)])
-        if socket_path:
-            command.extend(["--socket-path", str(socket_path)])
+        if is_new_version:
+            # Newer daemon versions use only socket_path
+            if socket_path:
+                command.extend(["--socket-path", str(socket_path)])
+        else:
+            # For older versions or when version is unknown
+            if secret_path:
+                command.extend(["--secret-path", str(secret_path)])
+            if socket_path:
+                command.extend(["--socket-path", str(socket_path)])
         return command
 
     command = [str(binary_path), "--stdout"]
-    if secret_path:
-        secret_flag = (
-            "--secret-path"
-            if playit_version and playit_version.startswith("1.")
-            else "--secret_path"
-        )
-        command.extend([secret_flag, str(secret_path)])
+    if is_new_version:
+        # Newer versions use only socket_path
+        if socket_path:
+            command.extend(["--socket-path", str(socket_path)])
+    else:
+        # For older versions or when version is unknown
+        if secret_path:
+            command.extend(["--secret_path", str(secret_path)])
+        if socket_path:
+            command.extend(["--socket-path", str(socket_path)])
     command.append("start")
     return command
 

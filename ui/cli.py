@@ -539,14 +539,17 @@ def playit_setup_wizard(
                     "INFO",
                     f"Starting temporary {Path(resolved_binary).name} for setup...",
                 )
+                daemon_args = [resolved_binary]
+                if playit_version and playit_version.startswith("1."):
+                    # Newer versions only accept socket_path
+                    daemon_args.extend(["--socket-path", str(socket_file)])
+                else:
+                    # Older versions accept secret_path and/or socket_path
+                    daemon_args.extend(["--secret-path", str(secret_file)])
+                    daemon_args.extend(["--socket-path", str(socket_file)])
+
                 daemon = subprocess.Popen(
-                    [
-                        resolved_binary,
-                        "--secret-path",
-                        str(secret_file),
-                        "--socket-path",
-                        str(socket_file),
-                    ],
+                    daemon_args,
                     cwd=instance.server_dir,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -629,35 +632,46 @@ def playit_setup_wizard(
                             exchange_output = f"{exchange_result.stdout or ''}\n"
                             exchange_output += exchange_result.stderr or ""
                             exchange_output = exchange_output.strip()
-                        stored_secret = read_text_file(instance.playit_secret_file)
-                        if not stored_secret:
-                            raw_secret_line = extract_last_non_empty_line(
-                                exchange_output
-                            )
-                            fallback_secret = (
-                                raw_secret_line.split()[-1] if raw_secret_line else None
-                            )
-                            if fallback_secret:
-                                write_text_file(
-                                    instance.playit_secret_file, fallback_secret
+                        
+                        # For v1.x, daemon handles secret internally via socket
+                        stored_secret = None
+                        if not (playit_version and playit_version.startswith("1.")):
+                            stored_secret = read_text_file(instance.playit_secret_file)
+                            if not stored_secret:
+                                raw_secret_line = extract_last_non_empty_line(
+                                    exchange_output
                                 )
-                                stored_secret = fallback_secret
+                                fallback_secret = (
+                                    raw_secret_line.split()[-1] if raw_secret_line else None
+                                )
+                                if fallback_secret:
+                                    write_text_file(
+                                        instance.playit_secret_file, fallback_secret
+                                    )
+                                    stored_secret = fallback_secret
+                        
                         if (
                             exchange_result
                             and exchange_result.returncode == 0
-                            and stored_secret
+                            and ((playit_version and playit_version.startswith("1.")) or stored_secret)
                         ):
-                            logger.log(
-                                "SUCCESS",
-                                (
-                                    f"Stored playit secret for {current_server} "
-                                    f"at {instance.playit_secret_file}"
-                                ),
-                            )
+                            if playit_version and playit_version.startswith("1."):
+                                logger.log(
+                                    "SUCCESS",
+                                    f"Playit agent linked for {current_server} via socket!",
+                                )
+                            else:
+                                logger.log(
+                                    "SUCCESS",
+                                    (
+                                        f"Stored playit secret for {current_server} "
+                                        f"at {instance.playit_secret_file}"
+                                    ),
+                                )
                         else:
                             logger.log(
                                 "ERROR",
-                                "Playit claim exchange did not produce a usable secret.",
+                                "Playit claim exchange did not complete successfully.",
                             )
                             if exchange_output:
                                 logger.log("INFO", exchange_output)

@@ -183,7 +183,9 @@ def start_playit_agent(
             ),
             None,
         )
-    if not secret_file.exists():
+    # Only check for secret file for older versions (v0.x)
+    playit_version = get_playit_version(resolved)
+    if not (playit_version and playit_version.startswith("1.")) and not secret_file.exists():
         return (
             TunnelStatus(
                 provider="playit",
@@ -206,7 +208,7 @@ def start_playit_agent(
         resolved,
         secret_path=secret_file,
         socket_path=socket_file,
-        playit_version=get_playit_version(resolved),
+        playit_version=playit_version,
     )
     process = subprocess.Popen(
         command,
